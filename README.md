@@ -1,36 +1,273 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# OJT Logbook Maker
 
-## Getting Started
+AI-powered form filling for your OJT (On-the-Job Training) logbook. Paste your daily notes and let AI organize them into the correct logbook sections — your text, your words, perfectly organized.
 
-First, run the development server:
+> **Important**: This is NOT an AI writing tool. The AI only classifies and maps your existing text into the correct fields. It never generates, rewrites, or paraphrases content.
+
+## Features
+
+- **Paste → Auto Fill → Review → Export** — Simple 4-step workflow
+- **Exact Text Preservation** — Your words are never changed
+- **AI Text Classification** — Powered by Google Gemini 2.0 Flash
+- **Double Validation** — Server-side + client-side verification that AI output matches original text
+- **Manual Override** — Fill sections manually without AI
+- **A4 PDF Generation** — Professional OJT logbook format with auto page breaks
+- **Complete Logbook** — Combine all entries into a single PDF
+- **Student Profile** — One-time setup for the logbook cover page
+- **Supervisor Feedback** — Monthly performance assessments with 10 rating criteria
+- **Dashboard** — Calendar view with CRUD operations (View, Edit, Delete, Duplicate)
+- **Authentication** — Supabase Auth with email/password
+
+## Tech Stack
+
+| Layer        | Technology                              |
+| ------------ | --------------------------------------- |
+| Framework    | Next.js 15 (App Router)                 |
+| Language     | TypeScript                              |
+| Styling      | Tailwind CSS v4                         |
+| Icons        | Lucide React                            |
+| Database     | Supabase (PostgreSQL + Auth)            |
+| AI           | Google Gemini 2.0 Flash                 |
+| PDF          | jsPDF (client-side, programmatic)       |
+
+## Setup
+
+### 1. Clone and Install
+
+```bash
+cd ojt-logbook-maker
+npm install
+```
+
+### 2. Environment Variables
+
+Copy `.env.example` to `.env.local`:
+
+```bash
+cp .env.example .env.local
+```
+
+Fill in your values:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+GEMINI_API_KEY=your_gemini_api_key
+```
+
+### 3. Supabase Setup
+
+1. Create a new project at [supabase.com](https://supabase.com)
+2. Go to **Settings → API** to get your URL and anon key
+3. Go to **SQL Editor** and run the following schema:
+
+```sql
+-- ============================================================
+-- PROFILES TABLE
+-- ============================================================
+CREATE TABLE profiles (
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  learner_name TEXT DEFAULT '',
+  registration_number TEXT DEFAULT '',
+  program_name TEXT DEFAULT '',
+  semester TEXT DEFAULT '',
+  location TEXT DEFAULT '',
+  industry_partner_name TEXT DEFAULT '',
+  ojt_start_date DATE,
+  ojt_end_date DATE,
+  department TEXT DEFAULT '',
+  designation TEXT DEFAULT '',
+  supervisor_name TEXT DEFAULT '',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- RLS
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own profile"
+  ON profiles FOR SELECT
+  USING (auth.uid() = id);
+
+CREATE POLICY "Users can insert own profile"
+  ON profiles FOR INSERT
+  WITH CHECK (auth.uid() = id);
+
+CREATE POLICY "Users can update own profile"
+  ON profiles FOR UPDATE
+  USING (auth.uid() = id);
+
+-- ============================================================
+-- DAILY ENTRIES TABLE
+-- ============================================================
+CREATE TABLE daily_entries (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  date DATE NOT NULL,
+  start_time TEXT DEFAULT '',
+  end_time TEXT DEFAULT '',
+  department TEXT DEFAULT '',
+  designation TEXT DEFAULT '',
+  original_text TEXT DEFAULT '',
+  my_space TEXT DEFAULT '',
+  tasks_carried_out TEXT DEFAULT '',
+  key_learning_observations TEXT DEFAULT '',
+  tools_technology_used TEXT DEFAULT '',
+  special_achievements TEXT DEFAULT '',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- RLS
+ALTER TABLE daily_entries ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own entries"
+  ON daily_entries FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own entries"
+  ON daily_entries FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own entries"
+  ON daily_entries FOR UPDATE
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own entries"
+  ON daily_entries FOR DELETE
+  USING (auth.uid() = user_id);
+
+-- ============================================================
+-- SUPERVISOR FEEDBACK TABLE
+-- ============================================================
+CREATE TYPE rating_value AS ENUM ('good', 'acceptable', 'needs_improvement');
+
+CREATE TABLE supervisor_feedback (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  from_date DATE,
+  to_date DATE,
+  student_name TEXT DEFAULT '',
+  punctuality TEXT DEFAULT '',
+  professional_appearance TEXT DEFAULT '',
+  ability_to_communicate TEXT DEFAULT '',
+  interest_shown_for_learning TEXT DEFAULT '',
+  productivity_at_work TEXT DEFAULT '',
+  error_free_work TEXT DEFAULT '',
+  working_as_team TEXT DEFAULT '',
+  initiative_and_commitment TEXT DEFAULT '',
+  flexibility_and_adaptability TEXT DEFAULT '',
+  adherence_to_safety_ethics TEXT DEFAULT '',
+  total_score INTEGER,
+  remarks TEXT DEFAULT '',
+  supervisor_name TEXT DEFAULT '',
+  designation TEXT DEFAULT '',
+  signature_date DATE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- RLS
+ALTER TABLE supervisor_feedback ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own feedback"
+  ON supervisor_feedback FOR SELECT
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own feedback"
+  ON supervisor_feedback FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update own feedback"
+  ON supervisor_feedback FOR UPDATE
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own feedback"
+  ON supervisor_feedback FOR DELETE
+  USING (auth.uid() = user_id);
+```
+
+4. Go to **Authentication → Settings** and configure:
+   - Enable Email/Password sign-in
+   - Set your Site URL (e.g., `http://localhost:3000`)
+   - Add `http://localhost:3000/auth/callback` to Redirect URLs
+
+### 4. Get a Gemini API Key
+
+1. Go to [Google AI Studio](https://aistudio.google.com/app/apikey)
+2. Create an API key
+3. Add it to your `.env.local` as `GEMINI_API_KEY`
+
+### 5. Run the Dev Server
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Core Workflow
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+Paste text → Click "Auto Fill Logbook" → AI classifies text → Review & edit → Save → Download PDF
+```
 
-## Learn More
+The AI acts as a **semantic classifier/extractor** — it only determines which piece of the student's existing text belongs in which logbook field. It never generates new content.
 
-To learn more about Next.js, take a look at the following resources:
+## Project Structure
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```
+src/
+├── app/
+│   ├── page.tsx                          # Landing page
+│   ├── layout.tsx                        # Root layout
+│   ├── globals.css                       # Design system
+│   ├── (auth)/                           # Auth pages
+│   │   ├── login/page.tsx
+│   │   └── signup/page.tsx
+│   ├── auth/callback/route.ts            # OAuth callback
+│   ├── api/extract-logbook/route.ts      # AI extraction API
+│   └── dashboard/
+│       ├── page.tsx                      # Entry list
+│       ├── new-entry/page.tsx            # Core paste→fill→review flow
+│       ├── entry/[id]/page.tsx           # View/edit entry
+│       ├── profile/page.tsx              # Student profile
+│       ├── feedback/page.tsx             # Supervisor feedback
+│       └── logbook/page.tsx              # Complete logbook PDF
+├── components/
+│   ├── sidebar.tsx                       # Dashboard sidebar
+│   ├── navbar.tsx                        # Top navbar + mobile drawer
+│   ├── detected-fields.tsx              # 5 editable logbook fields
+│   ├── original-text-panel.tsx          # Read-only original text
+│   ├── logbook-preview.tsx              # A4 preview component
+│   └── entry-card.tsx                   # Dashboard entry card
+├── lib/
+│   ├── supabase/client.ts               # Browser Supabase client
+│   ├── supabase/server.ts               # Server Supabase client
+│   ├── pdf-generator.ts                 # jsPDF document generation
+│   ├── types.ts                         # TypeScript interfaces
+│   ├── validation.ts                    # Text verification logic
+│   └── utils.ts                         # Date/time utilities
+└── middleware.ts                         # Auth session middleware
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Deployment
 
-## Deploy on Vercel
+### Vercel (Recommended)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. Push to GitHub
+2. Import in [Vercel](https://vercel.com)
+3. Set environment variables in Vercel dashboard
+4. Deploy
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Other Platforms
+
+```bash
+npm run build
+npm start
+```
+
+Ensure the `GEMINI_API_KEY` environment variable is set server-side (not exposed to the client).
+
+## License
+
+MIT

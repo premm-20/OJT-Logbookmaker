@@ -1,26 +1,141 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* ============================================================
+   OJT Logbook Maker — Design System
+   Clean, minimal, professional, student-friendly
+   ============================================================ */
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Primary — Deep indigo */
+  --color-primary-50: oklch(0.97 0.02 270);
+  --color-primary-100: oklch(0.93 0.04 270);
+  --color-primary-200: oklch(0.86 0.08 270);
+  --color-primary-300: oklch(0.75 0.14 270);
+  --color-primary-400: oklch(0.63 0.2 270);
+  --color-primary-500: oklch(0.53 0.24 270);
+  --color-primary-600: oklch(0.45 0.24 270);
+  --color-primary-700: oklch(0.38 0.2 270);
+  --color-primary-800: oklch(0.32 0.16 270);
+  --color-primary-900: oklch(0.27 0.12 270);
+
+  /* Surface colors */
+  --color-surface-50: oklch(0.985 0 0);
+  --color-surface-100: oklch(0.97 0.005 270);
+  --color-surface-200: oklch(0.94 0.01 270);
+  --color-surface-800: oklch(0.25 0.02 270);
+  --color-surface-900: oklch(0.18 0.02 270);
+  --color-surface-950: oklch(0.13 0.02 270);
+
+  /* Accent — Warm amber */
+  --color-accent-400: oklch(0.82 0.16 80);
+  --color-accent-500: oklch(0.75 0.18 75);
+  --color-accent-600: oklch(0.65 0.18 70);
+
+  /* Status colors */
+  --color-success: oklch(0.65 0.18 145);
+  --color-warning: oklch(0.78 0.15 75);
+  --color-danger: oklch(0.6 0.2 25);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* ---- Base Styles ---- */
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  background-color: var(--color-surface-50);
+  color: var(--color-surface-900);
+}
+
+/* ---- Smooth transitions ---- */
+*, *::before, *::after {
+  transition-property: color, background-color, border-color, box-shadow, opacity, transform;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ---- Custom scrollbar ---- */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-primary-200);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-primary-300);
+}
+
+/* ---- Focus ring ---- */
+:focus-visible {
+  outline: 2px solid var(--color-primary-400);
+  outline-offset: 2px;
+}
+
+/* ---- PDF Preview Styles ---- */
+.pdf-preview {
+  font-family: "Times New Roman", Times, serif;
+  background: white;
+  color: #000;
+}
+
+.pdf-preview h1 {
+  font-size: 16pt;
+  font-weight: bold;
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+.pdf-preview h2 {
+  font-size: 12pt;
+  font-weight: bold;
+  text-transform: uppercase;
+  border-bottom: 1px solid #333;
+  padding-bottom: 4px;
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
+.pdf-preview .meta-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11pt;
+  margin-bottom: 4px;
+}
+
+.pdf-preview .section-content {
+  font-size: 11pt;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  min-height: 40px;
+}
+
+/* ---- Animation keyframes ---- */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-in {
+  from { opacity: 0; transform: translateX(-12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.4s ease-out forwards;
+}
+
+.animate-slide-in {
+  animation: slide-in 0.3s ease-out forwards;
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 1.5s ease-in-out infinite;
 }

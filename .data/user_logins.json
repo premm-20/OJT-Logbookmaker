@@ -1,0 +1,67 @@
+[
+  {
+    "id": "sess_1789114948127_643ux",
+    "userId": "usr_7498298386",
+    "name": "Prem Singh",
+    "email": "prem.p25@medhaviskillsuniversity.edu.in",
+    "mobile": "7498298386",
+    "loginAt": "2026-09-11T08:22:28.127Z",
+    "ipAddress": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+    "device": "Windows PC",
+    "browser": "Chrome",
+    "status": "Success"
+  },
+  {
+    "id": "sess_1789113520859_0r8xs",
+    "userId": "usr_9876543210",
+    "name": "Prem Singh",
+    "email": "prem.singh@medhaviskillsuniversity.edu.in",
+    "mobile": "9876543210",
+    "loginAt": "2026-09-11T07:58:40.859Z",
+    "ipAddress": "::1",
+    "userAgent": "node",
+    "device": "Desktop (PC)",
+    "browser": "Web Browser",
+    "status": "Success"
+  },
+  {
+    "id": "sess_1789112915970_8hxuo",
+    "userId": "usr_7498298386",
+    "name": "Prem",
+    "email": "prem.p25@medhaviskillsuniversity.edu.in",
+    "mobile": "7498298386",
+    "loginAt": "2026-09-11T07:48:35.970Z",
+    "ipAddress": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+    "device": "Windows PC",
+    "browser": "Chrome",
+    "status": "Success"
+  },
+  {
+    "id": "sess_1789104657264_fp6ke",
+    "userId": "usr_9876543210",
+    "name": "Test User",
+    "email": "student@medhaviskillsuniversity.edu.in",
+    "mobile": "9876543210",
+    "loginAt": "2026-09-11T05:30:57.264Z",
+    "ipAddress": "::1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
+    "device": "Windows PC",
+    "browser": "Chrome",
+    "status": "Success"
+  },
+  {
+    "id": "sess_1789104494023_3x27j",
+    "userId": "usr_9876543210",
+    "name": "Prem Singh",
+    "email": "prem.singh@medhaviskillsuniversity.edu.in",
+    "mobile": "9876543210",
+    "loginAt": "2026-09-11T05:28:14.023Z",
+    "ipAddress": "::1",
+    "userAgent": "node",
+    "device": "Desktop (PC)",
+    "browser": "Web Browser",
+    "status": "Success"
+  }
+]

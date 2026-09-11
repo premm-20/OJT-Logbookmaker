@@ -1,0 +1,119 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
+import { verifyOtp } from "@/lib/otp-store";
+import { recordUserLogin } from "@/lib/login-tracker";
+
+const UNIVERSITY_EMAIL_REGEX =
+  /^[a-zA-Z0-9._%+-]+@medhaviskills(?:\.university|university)\.edu\.in$/i;
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json();
+    const { name, email, mobile, otp } = body;
+
+    const cleanEmail = (email || "").trim().toLowerCase();
+    const cleanOtp = (otp || "").trim();
+
+    if (!cleanEmail || !UNIVERSITY_EMAIL_REGEX.test(cleanEmail)) {
+      return NextResponse.json(
+        { error: "Invalid university email address." },
+        { status: 400 }
+      );
+    }
+
+    if (!cleanOtp || cleanOtp.length < 6) {
+      return NextResponse.json(
+        { error: "Please enter the complete 6-digit OTP code." },
+        { status: 400 }
+      );
+    }
+
+    let isVerified = false;
+
+    // 1. First attempt: Verify token with Supabase Auth
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (supabaseUrl && supabaseKey) {
+      try {
+        const supabase = createClient(supabaseUrl, supabaseKey);
+        const { data: supaData, error: supaError } = await supabase.auth.verifyOtp({
+          email: cleanEmail,
+          token: cleanOtp,
+          type: "email",
+        });
+
+        if (!supaError && supaData?.user) {
+          isVerified = true;
+        }
+      } catch (err) {
+        console.warn("Supabase verifyOtp check exception:", err);
+      }
+    }
+
+    // 2. Fallback check against local OTP store
+    if (!isVerified) {
+      isVerified = verifyOtp(cleanEmail, cleanOtp);
+    }
+
+    if (!isVerified) {
+      return NextResponse.json(
+        {
+          error:
+            "Invalid or expired verification code. Please check the latest code sent to your Gmail.",
+        },
+        { status: 401 }
+      );
+    }
+
+    const cleanMobile = (mobile || "").replace(/\D/g, "");
+    const trimmedName = (name || "Student").trim();
+
+    // Extract client IP and User-Agent
+    const forwarded = request.headers.get("x-forwarded-for");
+    const ipAddress = forwarded
+      ? forwarded.split(",")[0].trim()
+      : request.headers.get("x-real-ip") || "127.0.0.1";
+    const userAgent = request.headers.get("user-agent") || "";
+
+    // Record login for admin audit logs
+    const session = await recordUserLogin({
+      name: trimmedName,
+      email: cleanEmail,
+      mobile: cleanMobile,
+      ipAddress,
+      userAgent,
+    });
+
+    const sessionData = {
+      id: session.userId,
+      sessionId: session.id,
+      name: session.name,
+      email: session.email,
+      mobile: session.mobile,
+      phone_number: session.mobile,
+      learner_name: session.name,
+      loginTime: session.loginAt,
+      verifiedWithOtp: true,
+    };
+
+    const response = NextResponse.json({
+      success: true,
+      verified: true,
+      user: sessionData,
+    });
+
+    // Set secure cookie valid for 30 days
+    response.cookies.set("ojt_session", JSON.stringify(sessionData), {
+      path: "/",
+      maxAge: 60 * 60 * 24 * 30, // 30 days
+      sameSite: "lax",
+      httpOnly: false,
+    });
+
+    return response;
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Failed to verify OTP";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
