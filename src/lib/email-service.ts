@@ -97,30 +97,19 @@ export async function sendVerificationEmail(
   // Method 1: SMTP via Nodemailer
   if (smtpHost && smtpUser && smtpPass) {
     try {
-      const isGmail = smtpHost.includes("gmail.com") || smtpUser.endsWith("@gmail.com");
-      const transporter = isGmail
-        ? nodemailer.createTransport({
-            service: "gmail",
-            auth: {
-              user: smtpUser,
-              pass: smtpPass,
-            },
-            connectionTimeout: 8000,
-            greetingTimeout: 8000,
-            socketTimeout: 10000,
-          })
-        : nodemailer.createTransport({
-            host: smtpHost,
-            port: smtpPort,
-            secure: smtpPort === 465,
-            auth: {
-              user: smtpUser,
-              pass: smtpPass,
-            },
-            connectionTimeout: 8000,
-            greetingTimeout: 8000,
-            socketTimeout: 10000,
-          });
+      const transporter = nodemailer.createTransport({
+        host: smtpHost.includes("gmail.com") ? "smtp.gmail.com" : smtpHost,
+        port: smtpPort || 587,
+        secure: smtpPort === 465,
+        family: 4, // Force IPv4 to prevent ENETUNREACH errors on networks without IPv6
+        auth: {
+          user: smtpUser,
+          pass: smtpPass,
+        },
+        connectionTimeout: 8000,
+        greetingTimeout: 8000,
+        socketTimeout: 10000,
+      } as any);
 
       await transporter.sendMail({
         from: smtpFrom,

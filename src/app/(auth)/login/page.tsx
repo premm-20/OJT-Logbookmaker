@@ -73,6 +73,12 @@ function LoginFormContent() {
 
   // Check URL search parameters for errors from callback
   useEffect(() => {
+    const verifier = searchParams.get("neon_auth_session_verifier");
+    if (verifier) {
+      window.location.href = `/auth/callback?neon_auth_session_verifier=${encodeURIComponent(verifier)}`;
+      return;
+    }
+
     const errCode = searchParams.get("error");
     const msg = searchParams.get("msg");
     const attemptedEmail = searchParams.get("email");

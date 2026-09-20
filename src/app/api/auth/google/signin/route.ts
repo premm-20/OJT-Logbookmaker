@@ -7,7 +7,7 @@ export async function GET(request: Request) {
       process.env.NEXT_PUBLIC_NEON_AUTH_URL ||
       "https://ep-long-feather-b59jje5f.neonauth.c-7.us-east-2.aws.neon.tech/neondb/auth";
 
-    const callbackURL = `${origin}/dashboard`;
+    const callbackURL = `${origin}/auth/callback`;
 
     const res = await fetch(`${neonAuthUrl}/sign-in/social`, {
       method: "POST",
@@ -29,7 +29,16 @@ export async function GET(request: Request) {
 
     const data = await res.json();
     if (data?.url) {
-      return NextResponse.redirect(data.url);
+      const redirectRes = NextResponse.redirect(data.url);
+      const setCookies = res.headers.getSetCookie();
+      for (const cookieStr of setCookies) {
+        // If on localhost (HTTP), strip Secure flag and prefix so browser saves cookie
+        const sanitizedCookie = origin.startsWith("http://localhost")
+          ? cookieStr.replace(/;\s*Secure/gi, "").replace(/__Secure-/gi, "")
+          : cookieStr;
+        redirectRes.headers.append("Set-Cookie", sanitizedCookie);
+      }
+      return redirectRes;
     }
 
     return NextResponse.redirect(`${origin}/login?error=google_no_url`);
