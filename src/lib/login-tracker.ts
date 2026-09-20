@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { createClient } from "@supabase/supabase-js";
+import { getDb } from "@/lib/db";
 
 export interface LoginSession {
   id: string;
@@ -102,28 +102,22 @@ export async function recordUserLogin(params: {
     console.error("Failed to write to local login store:", err);
   }
 
-  // 2. Write to Supabase if configured
+  // 2. Write to Neon PostgreSQL database
   try {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (supabaseUrl && supabaseKey && !supabaseUrl.includes("your_supabase")) {
-      const supabase = createClient(supabaseUrl, supabaseKey);
-      await supabase.from("user_logins").insert({
-        id: session.id,
-        user_id: session.userId,
-        name: session.name,
-        email: session.email,
-        mobile: session.mobile,
-        login_at: session.loginAt,
-        ip_address: session.ipAddress,
-        user_agent: session.userAgent,
-        device: session.device,
-        browser: session.browser,
-      });
-    }
+    const sql = getDb();
+    await sql`
+      INSERT INTO user_logins (
+        id, user_id, name, email, mobile, login_at, ip_address, user_agent, device, browser, status
+      ) VALUES (
+        ${session.id}, ${session.userId}, ${session.name}, ${session.email},
+        ${session.mobile}, ${session.loginAt}, ${session.ipAddress},
+        ${session.userAgent}, ${session.device}, ${session.browser}, ${session.status}
+      )
+      ON CONFLICT (id) DO NOTHING;
+    `;
   } catch (err) {
     // Non-blocking fallback
-    console.warn("Supabase user_logins insert note:", err);
+    console.warn("Neon user_logins insert note:", err);
   }
 
   return session;
@@ -144,46 +138,45 @@ export async function getAllUserLogins(): Promise<{
     console.warn("Could not read local login sessions:", err);
   }
 
-  // Also check Supabase if local has fewer records
+  // Also query Neon PostgreSQL
   try {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (supabaseUrl && supabaseKey && !supabaseUrl.includes("your_supabase")) {
-      const supabase = createClient(supabaseUrl, supabaseKey);
-      const { data } = await supabase
-        .from("user_logins")
-        .select("*")
-        .order("login_at", { ascending: false })
-        .limit(500);
+    const sql = getDb();
+    const rows = await sql`
+      SELECT id, user_id, name, email, mobile, login_at, ip_address, user_agent, device, browser, status
+      FROM user_logins
+      ORDER BY login_at DESC
+      LIMIT 500;
+    `;
 
-      if (data && data.length > 0) {
-        const remoteSessions: LoginSession[] = data.map((d: any) => ({
-          id: d.id,
-          userId: d.user_id,
-          name: d.name,
-          email: d.email,
-          mobile: d.mobile,
-          loginAt: d.login_at,
-          ipAddress: d.ip_address || "127.0.0.1",
-          userAgent: d.user_agent || "",
-          device: d.device || "Unknown Device",
-          browser: d.browser || "Unknown Browser",
-          status: "Success",
-        }));
+    if (rows && rows.length > 0) {
+      const remoteSessions: LoginSession[] = rows.map((d: any) => ({
+        id: d.id,
+        userId: d.user_id,
+        name: d.name,
+        email: d.email,
+        mobile: d.mobile,
+        loginAt: d.login_at instanceof Date ? d.login_at.toISOString() : String(d.login_at),
+        ipAddress: d.ip_address || "127.0.0.1",
+        userAgent: d.user_agent || "",
+        device: d.device || "Unknown Device",
+        browser: d.browser || "Unknown Browser",
+        status: (d.status || "Success") as "Active" | "Success",
+      }));
 
-        // Merge by session ID
-        const existingIds = new Set(sessions.map((s) => s.id));
-        for (const rs of remoteSessions) {
-          if (!existingIds.has(rs.id)) {
-            sessions.push(rs);
-          }
+      // Merge by session ID
+      const existingIds = new Set(sessions.map((s) => s.id));
+      for (const rs of remoteSessions) {
+        if (!existingIds.has(rs.id)) {
+          sessions.push(rs);
         }
-        sessions.sort(
-          (a, b) => new Date(b.loginAt).getTime() - new Date(a.loginAt).getTime()
-        );
       }
+      sessions.sort(
+        (a, b) => new Date(b.loginAt).getTime() - new Date(a.loginAt).getTime()
+      );
     }
-  } catch {}
+  } catch (err) {
+    console.warn("Neon user_logins query note:", err);
+  }
 
   // Aggregate user summaries
   const userMap = new Map<string, UserSummary>();

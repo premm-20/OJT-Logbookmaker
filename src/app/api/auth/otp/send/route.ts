@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import { verifyUniversityEmail } from "@/lib/email-verifier";
 import { generateAndStoreOtp } from "@/lib/otp-store";
 import { sendVerificationEmail } from "@/lib/email-service";
@@ -49,29 +48,6 @@ export async function POST(request: Request) {
       otp,
       magicLinkUrl,
     });
-
-    // 3. Also trigger Supabase Auth (if custom SMTP enabled in Supabase)
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (supabaseUrl && supabaseKey) {
-      try {
-        const supabase = createClient(supabaseUrl, supabaseKey);
-        await supabase.auth.signInWithOtp({
-          email: cleanEmail,
-          options: {
-            shouldCreateUser: true,
-            emailRedirectTo: `${protocol}://${host}/auth/callback`,
-            data: {
-              name: trimmedName,
-              full_name: trimmedName,
-              mobile: cleanMobile,
-            },
-          },
-        });
-      } catch (err) {
-        console.warn("Supabase auth trigger note:", err);
-      }
-    }
 
     const response = NextResponse.json({
       success: true,

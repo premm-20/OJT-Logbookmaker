@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
 import { verifyOtp } from "@/lib/otp-store";
 import { recordUserLogin } from "@/lib/login-tracker";
 
@@ -33,33 +32,9 @@ export async function POST(request: Request) {
       );
     }
 
-    let isVerified = false;
+    // Verify using cryptographic stateless HMAC challenge token (Vercel & Railway compatible)
+    const isVerified = verifyOtp(cleanEmail, cleanOtp, challengeToken);
 
-    // 1. First attempt: Verify token with Supabase Auth (if connected)
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-    if (supabaseUrl && supabaseKey) {
-      try {
-        const supabase = createClient(supabaseUrl, supabaseKey);
-        const { data: supaData, error: supaError } = await supabase.auth.verifyOtp({
-          email: cleanEmail,
-          token: cleanOtp,
-          type: "email",
-        });
-
-        if (!supaError && supaData?.user) {
-          isVerified = true;
-        }
-      } catch (err) {
-        console.warn("Supabase verifyOtp check exception:", err);
-      }
-    }
-
-    // 2. Stateless HMAC and In-Memory OTP verification (Serverless Vercel compatible!)
-    if (!isVerified) {
-      isVerified = verifyOtp(cleanEmail, cleanOtp, challengeToken);
-    }
 
     if (!isVerified) {
       return NextResponse.json(

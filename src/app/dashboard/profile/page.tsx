@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import type { ProfileFormData } from "@/lib/types";
 import {
   User,
@@ -28,7 +27,6 @@ const INITIAL_PROFILE: ProfileFormData = {
 };
 
 export default function ProfilePage() {
-  const supabase = createClient();
   const [profile, setProfile] = useState<ProfileFormData>(INITIAL_PROFILE);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -43,7 +41,9 @@ export default function ProfilePage() {
   async function fetchProfile() {
     // 1. Check local storage first
     let localEmail = "";
+    let currentUserId = "";
     try {
+      currentUserId = localStorage.getItem("ojt_user_id") || "";
       const storedLoginEmail = localStorage.getItem("ojt_user_login_email") || "";
       localEmail = storedLoginEmail;
       const storedName = localStorage.getItem("ojt_user_name") || "";
@@ -68,27 +68,30 @@ export default function ProfilePage() {
       }
     } catch {}
 
-    // 2. Fetch from Supabase if authenticated
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (user) {
-        const { data } = await supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", user.id)
-          .single();
-
-        if (data) {
-          setProfile((prev) => ({
-            ...prev,
-            ...data,
-            email_id: localEmail || data.email_id || prev.email_id,
-          }));
+    // 2. Fetch from Neon PostgreSQL
+    if (currentUserId) {
+      try {
+        const res = await fetch(`/api/profile?userId=${encodeURIComponent(currentUserId)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.profile) {
+            const p = data.profile;
+            setProfile((prev) => ({
+              ...prev,
+              learner_name: p.learner_name || prev.learner_name,
+              registration_number: p.enrollment_no || prev.registration_number,
+              program_name: p.program_name || prev.program_name,
+              industry_partner_name: p.industry_partner || prev.industry_partner_name,
+              supervisor_name: p.supervisor_name || prev.supervisor_name,
+              phone_number: p.phone_number || prev.phone_number,
+              email_id: localEmail || p.email_id || prev.email_id,
+              ojt_start_date: p.ojt_start_date || prev.ojt_start_date,
+              ojt_end_date: p.ojt_end_date || prev.ojt_end_date,
+            }));
+          }
         }
-      }
-    } catch {}
+      } catch {}
+    }
 
     setLoading(false);
   }
@@ -101,6 +104,7 @@ export default function ProfilePage() {
     // Always ensure login email is preserved
     const storedLoginEmail = localStorage.getItem("ojt_user_login_email") || profile.email_id;
     const finalProfile = { ...profile, email_id: storedLoginEmail };
+    const currentUserId = localStorage.getItem("ojt_user_id") || `usr_${finalProfile.phone_number || "student"}`;
 
     // Save to localStorage
     try {
@@ -113,22 +117,27 @@ export default function ProfilePage() {
       }
     } catch {}
 
-    // Save to Supabase if session exists
+    // Save to Neon PostgreSQL
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (user) {
-        await supabase.from("profiles").upsert(
-          {
-            id: user.id,
-            ...finalProfile,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "id" }
-        );
-      }
-    } catch {}
+      await fetch("/api/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: currentUserId,
+          learner_name: finalProfile.learner_name,
+          enrollment_no: finalProfile.registration_number,
+          program_name: finalProfile.program_name,
+          industry_partner: finalProfile.industry_partner_name,
+          supervisor_name: finalProfile.supervisor_name,
+          phone_number: finalProfile.phone_number,
+          email_id: finalProfile.email_id,
+          ojt_start_date: finalProfile.ojt_start_date,
+          ojt_end_date: finalProfile.ojt_end_date,
+        }),
+      });
+    } catch (err) {
+      console.warn("Neon profile save note:", err);
+    }
 
     setSaving(false);
     setStatus("success");
