@@ -33,7 +33,7 @@ export async function GET(request: Request) {
   const name = result.name || "Student";
   const mobile = result.mobile || "0000000000";
 
-  // Record verified session
+  // Record verified session in Neon PostgreSQL
   const session = await recordUserLogin({
     name,
     email,
@@ -42,7 +42,21 @@ export async function GET(request: Request) {
     userAgent: request.headers.get("user-agent") || "Magic Link",
   });
 
-  // Return HTML that hydrates client localStorage and forwards to dashboard
+  const sessionData = {
+    id: session.userId,
+    sessionId: session.id,
+    name: session.name,
+    email: session.email,
+    mobile: session.mobile,
+    phone_number: session.mobile,
+    learner_name: session.name,
+    loginTime: session.loginAt,
+    verifiedWithOtp: true,
+  };
+
+  const sessionCookieVal = encodeURIComponent(JSON.stringify(sessionData));
+
+  // Return HTML that hydrates client localStorage, sets document.cookie, and forwards to dashboard
   const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -50,6 +64,7 @@ export async function GET(request: Request) {
   <meta charset="utf-8">
   <script>
     try {
+      document.cookie = "ojt_session=${sessionCookieVal}; path=/; max-age=2592000; SameSite=Lax";
       localStorage.setItem("ojt_user_id", ${JSON.stringify(session.userId)});
       localStorage.setItem("ojt_user_name", ${JSON.stringify(name)});
       localStorage.setItem("ojt_user_mobile", ${JSON.stringify(mobile)});
@@ -78,8 +93,13 @@ export async function GET(request: Request) {
 </body>
 </html>`;
 
-  return new Response(html, {
+  const response = new Response(html, {
     status: 200,
-    headers: { "Content-Type": "text/html" },
+    headers: {
+      "Content-Type": "text/html",
+      "Set-Cookie": `ojt_session=${sessionCookieVal}; Path=/; Max-Age=2592000; SameSite=Lax`,
+    },
   });
+
+  return response;
 }

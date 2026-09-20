@@ -355,9 +355,23 @@ function LoginFormContent() {
 
         {/* Error notification */}
         {error && (
-          <div className="mb-5 p-3.5 rounded-2xl bg-red-50 border border-red-200 flex items-start gap-2.5 text-xs font-semibold text-red-700 animate-shake">
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span>{error}</span>
+          <div className="mb-5 p-3.5 rounded-2xl bg-red-50 border border-red-200 flex flex-col gap-1.5 text-xs font-semibold text-red-700 animate-shake">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+            {step === "details" && cleanEmail && (
+              <button
+                type="button"
+                onClick={() => {
+                  setError("");
+                  setStep("otp");
+                }}
+                className="text-left text-xs font-bold text-primary-700 hover:text-primary-900 underline mt-1 cursor-pointer pl-6.5"
+              >
+                Already received your code in Gmail? Click here to enter OTP &rarr;
+              </button>
+            )}
           </div>
         )}
 
@@ -552,6 +566,25 @@ function LoginFormContent() {
                   </>
                 )}
               </button>
+
+              {/* Already have code shortcut */}
+              <div className="text-center pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!cleanEmail) {
+                      setError("Please enter your university Gmail address above first.");
+                      document.getElementById("email")?.focus();
+                      return;
+                    }
+                    setError("");
+                    setStep("otp");
+                  }}
+                  className="text-xs font-bold text-primary-600 hover:text-primary-800 underline transition-colors cursor-pointer"
+                >
+                  Already received code in Gmail? Enter OTP &rarr;
+                </button>
+              </div>
             </form>
           </div>
         )}
