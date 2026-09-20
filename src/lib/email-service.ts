@@ -97,15 +97,30 @@ export async function sendVerificationEmail(
   // Method 1: SMTP via Nodemailer
   if (smtpHost && smtpUser && smtpPass) {
     try {
-      const transporter = nodemailer.createTransport({
-        host: smtpHost,
-        port: smtpPort,
-        secure: smtpPort === 465,
-        auth: {
-          user: smtpUser,
-          pass: smtpPass,
-        },
-      });
+      const isGmail = smtpHost.includes("gmail.com") || smtpUser.endsWith("@gmail.com");
+      const transporter = isGmail
+        ? nodemailer.createTransport({
+            service: "gmail",
+            auth: {
+              user: smtpUser,
+              pass: smtpPass,
+            },
+            connectionTimeout: 8000,
+            greetingTimeout: 8000,
+            socketTimeout: 10000,
+          })
+        : nodemailer.createTransport({
+            host: smtpHost,
+            port: smtpPort,
+            secure: smtpPort === 465,
+            auth: {
+              user: smtpUser,
+              pass: smtpPass,
+            },
+            connectionTimeout: 8000,
+            greetingTimeout: 8000,
+            socketTimeout: 10000,
+          });
 
       await transporter.sendMail({
         from: smtpFrom,
@@ -121,8 +136,15 @@ export async function sendVerificationEmail(
         message: `Verification code successfully delivered to ${to} via SMTP.`,
         configured: true,
       };
-    } catch (smtpErr) {
+    } catch (smtpErr: unknown) {
       console.error("Nodemailer SMTP failed:", smtpErr);
+      const errMsg = smtpErr instanceof Error ? smtpErr.message : "SMTP delivery failure";
+      return {
+        success: false,
+        deliveryMode: "smtp",
+        message: `Failed to deliver verification email: ${errMsg}`,
+        configured: true,
+      };
     }
   }
 

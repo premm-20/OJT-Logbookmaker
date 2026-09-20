@@ -49,6 +49,13 @@ export async function POST(request: Request) {
       magicLinkUrl,
     });
 
+    if (!sendResult.success) {
+      return NextResponse.json(
+        { error: sendResult.message || "Failed to dispatch verification email to your Gmail." },
+        { status: 500 }
+      );
+    }
+
     const response = NextResponse.json({
       success: true,
       email: cleanEmail,

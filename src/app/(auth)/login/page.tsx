@@ -169,62 +169,13 @@ function LoginFormContent() {
   };
 
   // ─────────────────────────────────────────────────────────────
-  // Action 1: Sign in with Google (Neon Auth Social Sign-In)
+  // Action 1: Sign in with Google (Direct Server Route via Neon Auth)
   // ─────────────────────────────────────────────────────────────
-  async function handleGoogleSignIn() {
+  function handleGoogleSignIn() {
     setError("");
     setInfoMessage("");
     setGoogleLoading(true);
-
-    try {
-      const neonAuthUrl =
-        process.env.NEXT_PUBLIC_NEON_AUTH_URL ||
-        "https://ep-long-feather-b59jje5f.neonauth.c-7.us-east-2.aws.neon.tech/neondb/auth";
-
-      const callbackURL = `${window.location.origin}/dashboard`;
-
-      const res = await fetch(`${neonAuthUrl}/sign-in/social`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          provider: "google",
-          callbackURL,
-        }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data?.url) {
-          window.location.href = data.url;
-          return;
-        }
-      }
-
-      // Fallback to university email verification
-      if (cleanEmail && isEmailPatternMatch) {
-        const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
-        await handleRequestOtp(fakeEvent);
-      } else {
-        setInfoMessage(
-          "Please enter your university details below to receive an instant access code directly in your Gmail."
-        );
-        document.getElementById("email")?.focus();
-      }
-    } catch (err: unknown) {
-      console.error("Neon Auth Google Sign-in error:", err);
-      if (cleanEmail && isEmailPatternMatch) {
-        const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
-        await handleRequestOtp(fakeEvent);
-      } else {
-        setError(
-          "Could not initialize Google Sign-In. Please sign in below with your official university email."
-        );
-      }
-    } finally {
-      setGoogleLoading(false);
-    }
+    window.location.href = "/api/auth/google/signin";
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -260,16 +211,21 @@ function LoginFormContent() {
 
     setLoading(true);
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 14000);
+
     try {
       const res = await fetch("/api/auth/otp/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           name: trimmedName,
           email: cleanEmail,
           mobile: mobile,
         }),
       });
+      clearTimeout(timeoutId);
 
       const data = await res.json();
       if (!res.ok) {
@@ -290,8 +246,13 @@ function LoginFormContent() {
       setStep("otp");
       setResendCooldown(45); // 45 seconds cooldown
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Something went wrong.";
-      setError(msg);
+      clearTimeout(timeoutId);
+      if (err instanceof Error && err.name === "AbortError") {
+        setError("Network request timed out. Please check your internet connection and try again.");
+      } else {
+        const msg = err instanceof Error ? err.message : "Something went wrong.";
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }
