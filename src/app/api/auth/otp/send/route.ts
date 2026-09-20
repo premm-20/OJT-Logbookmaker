@@ -35,7 +35,7 @@ export async function POST(request: Request) {
     }
 
     // 1. Generate 6-digit OTP & secure magic link token
-    const { otp, token } = generateAndStoreOtp(cleanEmail, trimmedName, cleanMobile);
+    const { otp, token, challengeToken } = generateAndStoreOtp(cleanEmail, trimmedName, cleanMobile);
 
     // Compute request base URL
     const host = request.headers.get("host") || "localhost:3000";
@@ -73,16 +73,26 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       email: cleanEmail,
       deliveryMode: sendResult.deliveryMode,
       configured: sendResult.configured,
+      challengeToken,
       message: sendResult.configured
         ? `A 6-digit verification code and login link have been dispatched to your Gmail (${cleanEmail}). Please check your inbox and spam folder.`
         : `Verification code generated for ${cleanEmail}. In development mode without SMTP configured, code is logged to your terminal console.`,
       debugCode: !sendResult.configured ? otp : undefined,
     });
+
+    response.cookies.set("ojt_otp_challenge", challengeToken, {
+      path: "/",
+      maxAge: 15 * 60,
+      sameSite: "lax",
+      httpOnly: false,
+    });
+
+    return response;
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Failed to send verification code";
     return NextResponse.json({ error: msg }, { status: 500 });

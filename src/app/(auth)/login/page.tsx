@@ -48,6 +48,7 @@ function LoginFormContent() {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [showGoogleSetupModal, setShowGoogleSetupModal] = useState(false);
+  const [challengeToken, setChallengeToken] = useState("");
 
   // Email auto-verification states
   const [emailChecking, setEmailChecking] = useState(false);
@@ -299,6 +300,10 @@ function LoginFormContent() {
         debugCode: data.debugCode,
       });
 
+      if (data.challengeToken) {
+        setChallengeToken(data.challengeToken);
+      }
+
       setStep("otp");
       setResendCooldown(45); // 45 seconds cooldown
     } catch (err: unknown) {
@@ -332,6 +337,7 @@ function LoginFormContent() {
           email: cleanEmail,
           mobile: mobile,
           otp: otp.trim(),
+          challengeToken,
         }),
       });
 

@@ -9,7 +9,12 @@ const UNIVERSITY_EMAIL_REGEX =
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { name, email, mobile, otp } = body;
+    const { name, email, mobile, otp, challengeToken: bodyToken } = body;
+
+    const cookieHeader = request.headers.get("cookie") || "";
+    const cookieMatch = cookieHeader.match(/ojt_otp_challenge=([^;]+)/);
+    const cookieToken = cookieMatch ? decodeURIComponent(cookieMatch[1]) : undefined;
+    const challengeToken = bodyToken || cookieToken;
 
     const cleanEmail = (email || "").trim().toLowerCase();
     const cleanOtp = (otp || "").trim();
@@ -30,7 +35,7 @@ export async function POST(request: Request) {
 
     let isVerified = false;
 
-    // 1. First attempt: Verify token with Supabase Auth
+    // 1. First attempt: Verify token with Supabase Auth (if connected)
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -51,9 +56,9 @@ export async function POST(request: Request) {
       }
     }
 
-    // 2. Fallback check against local OTP store
+    // 2. Stateless HMAC and In-Memory OTP verification (Serverless Vercel compatible!)
     if (!isVerified) {
-      isVerified = verifyOtp(cleanEmail, cleanOtp);
+      isVerified = verifyOtp(cleanEmail, cleanOtp, challengeToken);
     }
 
     if (!isVerified) {
@@ -103,12 +108,18 @@ export async function POST(request: Request) {
       user: sessionData,
     });
 
-    // Set secure cookie valid for 30 days
+    // Set secure session cookie valid for 30 days
     response.cookies.set("ojt_session", JSON.stringify(sessionData), {
       path: "/",
       maxAge: 60 * 60 * 24 * 30, // 30 days
       sameSite: "lax",
       httpOnly: false,
+    });
+
+    // Clear temporary OTP challenge cookie
+    response.cookies.set("ojt_otp_challenge", "", {
+      path: "/",
+      maxAge: 0,
     });
 
     return response;
