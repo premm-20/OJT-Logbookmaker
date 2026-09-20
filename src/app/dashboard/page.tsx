@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import type { DailyEntry } from "@/lib/types";
 import { getMonthYear } from "@/lib/utils";
@@ -16,7 +15,6 @@ import {
 import Link from "next/link";
 
 export default function DashboardPage() {
-  const supabase = createClient();
   const router = useRouter();
   const [entries, setEntries] = useState<DailyEntry[]>([]);
   const [userName, setUserName] = useState<string>("");
@@ -50,30 +48,24 @@ export default function DashboardPage() {
       }
     } catch {}
 
-    // 2. Also try fetching from Supabase
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (user) {
-        const { data, error } = await supabase
-          .from("daily_entries")
-          .select("*")
-          .eq("user_id", user.id)
-          .order("date", { ascending: false });
-
-        if (!error && data && data.length > 0) {
-          setEntries(data as DailyEntry[]);
-          setLoading(false);
-          return;
+    // 2. Fetch from Neon PostgreSQL
+    if (currentUserId) {
+      try {
+        const res = await fetch(`/api/entries?userId=${encodeURIComponent(currentUserId)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.entries && Array.isArray(data.entries) && data.entries.length > 0) {
+            setEntries(data.entries as DailyEntry[]);
+            setLoading(false);
+            return;
+          }
         }
-      }
-    } catch {}
+      } catch {}
+    }
 
     setEntries(localEntries);
     setLoading(false);
   }
-
 
   async function handleDelete(id: string) {
     if (!confirm("Are you sure you want to delete this entry?")) return;
@@ -89,9 +81,16 @@ export default function DashboardPage() {
       localStorage.setItem("ojt_saved_entries", JSON.stringify(updated));
     } catch {}
 
-    try {
-      await supabase.from("daily_entries").delete().eq("id", id);
-    } catch {}
+    // Sync updated list to Neon PostgreSQL
+    if (currentUserId) {
+      try {
+        await fetch("/api/entries", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: currentUserId, entries: updated }),
+        });
+      } catch {}
+    }
   }
 
   function handleDuplicate(entry: DailyEntry) {

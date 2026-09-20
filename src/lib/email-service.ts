@@ -9,7 +9,7 @@ export interface SendEmailParams {
 
 export interface SendEmailResult {
   success: boolean;
-  deliveryMode: "smtp" | "resend" | "supabase" | "console";
+  deliveryMode: "smtp" | "resend" | "console";
   message: string;
   configured: boolean;
 }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { calculateHours, getTodayDate, ensureSpecialAchievements, formatDateDDMMYYYY, formatDateYYYYMMDD } from "@/lib/utils";
 import { validateExtraction } from "@/lib/validation";
@@ -37,7 +36,6 @@ import {
 
 export default function NewEntryPage() {
   const router = useRouter();
-  const supabase = createClient();
 
   // Learner's Details (Page 3 of Logbook)
   const [profile, setProfile] = useState<ProfileFormData>({
@@ -101,11 +99,12 @@ export default function NewEntryPage() {
 
   const totalHours = calculateHours(startTime, endTime);
 
-  // Load profile from Supabase or localStorage on mount
+  // Load profile from Neon or localStorage on mount
   useEffect(() => {
     async function loadProfile() {
-      // First, try loading from localStorage for immediate responsiveness
+      let currentUserId = "";
       try {
+        currentUserId = localStorage.getItem("ojt_user_id") || "";
         const localProf = localStorage.getItem("ojt_user_profile");
         const storedName = localStorage.getItem("ojt_user_name");
         const storedMobile = localStorage.getItem("ojt_user_mobile");
@@ -130,27 +129,35 @@ export default function NewEntryPage() {
             email_id: storedLoginEmail || prev.email_id,
           }));
         }
-
       } catch {}
 
-      try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (user) {
-          const { data } = await supabase.from("profiles").select("*").eq("id", user.id).single();
-          if (data) {
-            setProfile((prev) => ({
-              ...prev,
-              ...data,
-              ojt_start_date: data.ojt_start_date ? (formatDateDDMMYYYY(data.ojt_start_date) || data.ojt_start_date) : prev.ojt_start_date,
-            }));
-            if (data.department && !department) setDepartment(data.department);
-            if (data.designation && !designation) setDesignation(data.designation);
+      // Fetch from Neon PostgreSQL
+      if (currentUserId) {
+        try {
+          const res = await fetch(`/api/profile?userId=${encodeURIComponent(currentUserId)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data?.profile) {
+              const p = data.profile;
+              setProfile((prev) => ({
+                ...prev,
+                learner_name: p.learner_name || prev.learner_name,
+                registration_number: p.enrollment_no || prev.registration_number,
+                program_name: p.program_name || prev.program_name,
+                industry_partner_name: p.industry_partner || prev.industry_partner_name,
+                supervisor_name: p.supervisor_name || prev.supervisor_name,
+                phone_number: p.phone_number || prev.phone_number,
+                email_id: p.email_id || prev.email_id,
+                ojt_start_date: p.ojt_start_date ? (formatDateDDMMYYYY(p.ojt_start_date) || p.ojt_start_date) : prev.ojt_start_date,
+                ojt_end_date: p.ojt_end_date ? (formatDateDDMMYYYY(p.ojt_end_date) || p.ojt_end_date) : prev.ojt_end_date,
+              }));
+              if (p.department && !department) setDepartment(p.department);
+              if (p.designation && !designation) setDesignation(p.designation);
+            }
           }
+        } catch (err) {
+          console.warn("Could not fetch profile from Neon:", err);
         }
-      } catch (err) {
-        console.warn("Could not fetch profile from Supabase:", err);
       }
     }
     loadProfile();
@@ -169,39 +176,30 @@ export default function NewEntryPage() {
     if (field === "designation") setDesignation(value);
   };
 
-  // Helper to persist profile both to localStorage and Supabase
+  // Helper to persist profile both to localStorage and Neon PostgreSQL
   async function saveProfileToDatabase(profToSave: ProfileFormData) {
     try {
       localStorage.setItem("ojt_user_profile", JSON.stringify(profToSave));
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const currentUserId = localStorage.getItem("ojt_user_id") || `usr_${profToSave.phone_number || "student"}`;
 
-      if (user) {
-        localStorage.setItem(`ojt_user_profile_${user.id}`, JSON.stringify(profToSave));
-        await supabase.from("profiles").upsert(
-          {
-            id: user.id,
-            learner_name: profToSave.learner_name,
-            registration_number: profToSave.registration_number,
-            program_name: profToSave.program_name,
-            semester: profToSave.semester,
-            location: profToSave.location,
-            industry_partner_name: profToSave.industry_partner_name,
-            ojt_start_date: profToSave.ojt_start_date,
-            ojt_end_date: profToSave.ojt_end_date,
-            department: profToSave.department || department,
-            designation: profToSave.designation || designation,
-            supervisor_name: profToSave.supervisor_name,
-            phone_number: profToSave.phone_number,
-            email_id: profToSave.email_id,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "id" }
-        );
-      }
+      await fetch("/api/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: currentUserId,
+          learner_name: profToSave.learner_name,
+          enrollment_no: profToSave.registration_number,
+          program_name: profToSave.program_name,
+          industry_partner: profToSave.industry_partner_name,
+          supervisor_name: profToSave.supervisor_name,
+          phone_number: profToSave.phone_number,
+          email_id: profToSave.email_id,
+          ojt_start_date: profToSave.ojt_start_date,
+          ojt_end_date: profToSave.ojt_end_date,
+        }),
+      });
     } catch (err) {
-      console.warn("Could not save profile to Supabase:", err);
+      console.warn("Could not save profile to Neon:", err);
     }
   }
 
@@ -504,61 +502,46 @@ export default function NewEntryPage() {
   // =====================================================
   async function handleSave() {
     setSaving(true);
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      alert("Please log in to save entries.");
-      setSaving(false);
-      return;
-    }
+    const currentUserId = localStorage.getItem("ojt_user_id") || "student";
 
     // Ensure profile / learner's details are also persisted to database
     await saveProfileToDatabase(profile);
 
-    const { error } = await supabase.from("daily_entries").insert({
-      user_id: user?.id || "local-user",
+    const localRow = {
+      id: `entry_${currentUserId}_${dayNumber}_${Date.now()}`,
+      user_id: currentUserId,
+      day_number: dayNumber,
       date,
       start_time: startTime,
       end_time: endTime,
+      total_hours: totalHours,
       department,
       designation,
-      original_text: originalText,
+      original_text: originalText || `Day ${dayNumber}`,
       my_space: mySpace,
       tasks_carried_out: tasksCarriedOut,
       key_learning_observations: keyLearningObservations,
       tools_technology_used: toolsTechnologyUsed,
       special_achievements: specialAchievements,
-    });
+    };
 
-    if (error) {
-      console.warn("Supabase database save failed, storing locally:", error.message);
-      try {
-        const localRow = {
-          user_id: user?.id || "local-user",
-          date,
-          start_time: startTime,
-          end_time: endTime,
-          department,
-          designation,
-          original_text: originalText || `Day ${dayNumber}`,
-          my_space: mySpace,
-          tasks_carried_out: tasksCarriedOut,
-          key_learning_observations: keyLearningObservations,
-          tools_technology_used: toolsTechnologyUsed,
-          special_achievements: specialAchievements,
-        };
-        const existing = JSON.parse(localStorage.getItem("ojt_saved_entries") || "[]");
-        existing.push(localRow);
-        localStorage.setItem("ojt_saved_entries", JSON.stringify(existing));
-        router.push("/dashboard/logbook");
-        return;
-      } catch (err) {
-        alert("Failed to save entry: " + error.message);
-        setSaving(false);
-        return;
+    try {
+      const existing = JSON.parse(localStorage.getItem("ojt_saved_entries") || "[]");
+      existing.push(localRow);
+      localStorage.setItem("ojt_saved_entries", JSON.stringify(existing));
+      const userScopedKey = currentUserId ? `ojt_saved_entries_${currentUserId}` : "";
+      if (userScopedKey) {
+        localStorage.setItem(userScopedKey, JSON.stringify(existing));
       }
+
+      // Sync to Neon PostgreSQL
+      await fetch("/api/entries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: currentUserId, entries: [localRow] }),
+      });
+    } catch (err) {
+      console.warn("Entry save warning:", err);
     }
 
     router.push("/dashboard/logbook");
@@ -573,9 +556,7 @@ export default function NewEntryPage() {
     }
 
     setSaving(true);
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const currentUserId = localStorage.getItem("ojt_user_id") || "student";
 
     // Ensure profile / learner's details are also persisted to database
     await saveProfileToDatabase(profile);
@@ -601,14 +582,17 @@ export default function NewEntryPage() {
       return d;
     });
 
-    const rows = daysToSave.map((d) => ({
-      user_id: user?.id || "local-user",
+    const rows = daysToSave.map((d, index) => ({
+      id: `entry_${currentUserId}_${d.dayNumber || index + 1}_${Date.now()}_${index}`,
+      user_id: currentUserId,
+      day_number: d.dayNumber || index + 1,
       date: d.date || getTodayDate(),
       start_time: d.startTime || "09:00 AM",
       end_time: d.endTime || "05:00 PM",
+      total_hours: calculateHours(d.startTime || "09:00 AM", d.endTime || "05:00 PM"),
       department: d.department || department,
       designation: d.designation || designation,
-      original_text: d.originalText || `Day ${d.dayNumber}`,
+      original_text: d.originalText || `Day ${d.dayNumber || index + 1}`,
       my_space: Array.isArray(d.mySpace) ? joinFragments(d.mySpace) : d.mySpace || "",
       tasks_carried_out: Array.isArray(d.tasksCarriedOutToday)
         ? joinFragments(d.tasksCarriedOutToday)
@@ -624,19 +608,21 @@ export default function NewEntryPage() {
         : d.specialAchievements || "",
     }));
 
-    const { error } = await supabase.from("daily_entries").insert(rows);
-
-    if (error) {
-      console.warn("Supabase database save failed, storing locally:", error.message);
-      try {
-        localStorage.setItem("ojt_saved_entries", JSON.stringify(rows));
-        router.push("/dashboard/logbook");
-        return;
-      } catch (err) {
-        alert("Failed to save entries: " + error.message);
-        setSaving(false);
-        return;
+    try {
+      localStorage.setItem("ojt_saved_entries", JSON.stringify(rows));
+      const userScopedKey = currentUserId ? `ojt_saved_entries_${currentUserId}` : "";
+      if (userScopedKey) {
+        localStorage.setItem(userScopedKey, JSON.stringify(rows));
       }
+
+      // Sync batch to Neon PostgreSQL
+      await fetch("/api/entries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: currentUserId, entries: rows }),
+      });
+    } catch (err) {
+      console.warn("Neon bulk entries save warning:", err);
     }
 
     router.push("/dashboard/logbook");

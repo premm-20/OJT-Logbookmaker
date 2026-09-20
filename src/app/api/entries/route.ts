@@ -5,32 +5,29 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
     const userId = searchParams.get("userId") || "";
-
-    if (!userId) {
-      return NextResponse.json({ error: "userId required" }, { status: 400 });
-    }
+    const entryId = searchParams.get("entryId") || "";
 
     const sql = getDb();
+
+    if (entryId) {
+      const rows = await sql`
+        SELECT *
+        FROM daily_entries
+        WHERE id = ${entryId}
+        LIMIT 1;
+      `;
+      return NextResponse.json({ entry: rows[0] || null });
+    }
+
+    if (!userId) {
+      return NextResponse.json({ entries: [] });
+    }
+
     const rows = await sql`
-      SELECT
-        id,
-        user_id,
-        day_number,
-        date,
-        day_of_week,
-        start_time,
-        end_time,
-        total_hours,
-        learning_objectives,
-        tasks_performed,
-        tools_used,
-        key_learnings,
-        challenges_faced,
-        created_at,
-        updated_at
-      FROM logbook_entries
+      SELECT *
+      FROM daily_entries
       WHERE user_id = ${userId}
-      ORDER BY day_number ASC;
+      ORDER BY date ASC, created_at ASC;
     `;
 
     return NextResponse.json({ entries: rows || [] });
@@ -43,43 +40,63 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { userId, entries } = body;
+    const sql = getDb();
 
-    if (!userId || !Array.isArray(entries)) {
+    // Support both single entry save or array of entries
+    const userId = body.userId || body.user_id;
+    let entries = body.entries;
+
+    if (!entries && (body.date || body.tasks_carried_out || body.id)) {
+      entries = [body];
+    }
+
+    if (!Array.isArray(entries) || entries.length === 0) {
       return NextResponse.json(
-        { error: "userId and entries array required" },
+        { error: "Valid entry or entries array required" },
         { status: 400 }
       );
     }
 
-    const sql = getDb();
-
     for (const entry of entries) {
-      const entryId = entry.id || `entry_${userId}_${entry.day_number || Date.now()}`;
+      const targetUserId = entry.user_id || userId;
+      if (!targetUserId) continue;
+
+      const entryId = entry.id || `entry_${targetUserId}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const date = entry.date || new Date().toISOString().split("T")[0];
+      const startTime = entry.start_time || "09:00 AM";
+      const endTime = entry.end_time || "05:00 PM";
+      const department = entry.department || "";
+      const designation = entry.designation || "";
+      const originalText = entry.original_text || "";
+      const mySpace = entry.my_space || "";
+      const tasksCarriedOut = entry.tasks_carried_out || entry.tasks_performed || "";
+      const keyLearningObservations = entry.key_learning_observations || entry.key_learnings || "";
+      const toolsTechnologyUsed = entry.tools_technology_used || entry.tools_used || "";
+      const specialAchievements = entry.special_achievements || "";
+
       await sql`
-        INSERT INTO logbook_entries (
-          id, user_id, day_number, date, day_of_week, start_time, end_time,
-          total_hours, learning_objectives, tasks_performed, tools_used,
-          key_learnings, challenges_faced, updated_at
+        INSERT INTO daily_entries (
+          id, user_id, date, start_time, end_time, department, designation,
+          original_text, my_space, tasks_carried_out, key_learning_observations,
+          tools_technology_used, special_achievements, updated_at
         ) VALUES (
-          ${entryId}, ${userId}, ${entry.day_number || 1}, ${entry.date || ""},
-          ${entry.day_of_week || ""}, ${entry.start_time || ""}, ${entry.end_time || ""},
-          ${entry.total_hours || ""}, ${entry.learning_objectives || ""},
-          ${entry.tasks_performed || ""}, ${entry.tools_used || ""},
-          ${entry.key_learnings || ""}, ${entry.challenges_faced || ""}, NOW()
+          ${entryId}, ${targetUserId}, ${date}, ${startTime}, ${endTime},
+          ${department}, ${designation}, ${originalText}, ${mySpace},
+          ${tasksCarriedOut}, ${keyLearningObservations}, ${toolsTechnologyUsed},
+          ${specialAchievements}, NOW()
         )
         ON CONFLICT (id) DO UPDATE SET
-          day_number = EXCLUDED.day_number,
           date = EXCLUDED.date,
-          day_of_week = EXCLUDED.day_of_week,
           start_time = EXCLUDED.start_time,
           end_time = EXCLUDED.end_time,
-          total_hours = EXCLUDED.total_hours,
-          learning_objectives = EXCLUDED.learning_objectives,
-          tasks_performed = EXCLUDED.tasks_performed,
-          tools_used = EXCLUDED.tools_used,
-          key_learnings = EXCLUDED.key_learnings,
-          challenges_faced = EXCLUDED.challenges_faced,
+          department = EXCLUDED.department,
+          designation = EXCLUDED.designation,
+          original_text = EXCLUDED.original_text,
+          my_space = EXCLUDED.my_space,
+          tasks_carried_out = EXCLUDED.tasks_carried_out,
+          key_learning_observations = EXCLUDED.key_learning_observations,
+          tools_technology_used = EXCLUDED.tools_technology_used,
+          special_achievements = EXCLUDED.special_achievements,
           updated_at = NOW();
       `;
     }
@@ -87,10 +104,29 @@ export async function POST(request: Request) {
     return NextResponse.json({
       success: true,
       savedCount: entries.length,
-      message: `Successfully synchronized ${entries.length} logbook entries to Neon`,
+      message: `Successfully synchronized ${entries.length} logbook entries to Neon PostgreSQL`,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Failed to save logbook entries";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get("id") || "";
+
+    if (!id) {
+      return NextResponse.json({ error: "id is required" }, { status: 400 });
+    }
+
+    const sql = getDb();
+    await sql`DELETE FROM daily_entries WHERE id = ${id};`;
+
+    return NextResponse.json({ success: true });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Failed to delete entry";
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

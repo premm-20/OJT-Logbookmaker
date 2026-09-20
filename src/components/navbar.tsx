@@ -1,6 +1,5 @@
 "use client";
 
-import { createClient } from "@/lib/supabase/client";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { LogOut, Menu, BookOpen } from "lucide-react";
@@ -32,8 +31,10 @@ export default function Navbar({ onMenuClick }: NavbarProps) {
       await fetch("/api/auth/logout", { method: "POST" });
     } catch {}
     try {
-      const supabase = createClient();
-      await supabase.auth.signOut();
+      localStorage.removeItem("ojt_session");
+      localStorage.removeItem("ojt_user_id");
+      localStorage.removeItem("ojt_user_name");
+      localStorage.removeItem("ojt_user_login_email");
     } catch {}
     router.push("/login");
     router.refresh();

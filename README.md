@@ -16,7 +16,7 @@ AI-powered form filling for your OJT (On-the-Job Training) logbook. Paste your d
 - **Student Profile** — One-time setup for the logbook cover page
 - **Supervisor Feedback** — Monthly performance assessments with 10 rating criteria
 - **Dashboard** — Calendar view with CRUD operations (View, Edit, Delete, Duplicate)
-- **Authentication** — Supabase Auth with email/password
+- **Authentication** — Official University Email OTP / Magic Link with Neon DB session tracking
 
 ## Tech Stack
 
@@ -26,7 +26,8 @@ AI-powered form filling for your OJT (On-the-Job Training) logbook. Paste your d
 | Language     | TypeScript                              |
 | Styling      | Tailwind CSS v4                         |
 | Icons        | Lucide React                            |
-| Database     | Supabase (PostgreSQL + Auth)            |
+| Database     | Neon Serverless PostgreSQL              |
+| Email        | Nodemailer (Gmail SMTP)                 |
 | AI           | Google Gemini 2.0 Flash                 |
 | PDF          | jsPDF (client-side, programmatic)       |
 
@@ -50,16 +51,16 @@ cp .env.example .env.local
 Fill in your values:
 
 ```env
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+DATABASE_URL=postgresql://user:password@ep-xyz.neon.tech/neondb?sslmode=require
 GEMINI_API_KEY=your_gemini_api_key
+SMTP_USER=ojtlogbookmaker@gmail.com
+SMTP_PASS=your_16_character_app_password
 ```
 
-### 3. Supabase Setup
+### 3. Neon Database Setup
 
-1. Create a new project at [supabase.com](https://supabase.com)
-2. Go to **Settings → API** to get your URL and anon key
-3. Go to **SQL Editor** and run the following schema:
+1. Create a serverless PostgreSQL database at [neon.tech](https://neon.tech)
+2. Copy your connection string into `DATABASE_URL` in `.env.local` or Railway / Vercel environment settings.
 
 ```sql
 -- ============================================================
@@ -241,8 +242,8 @@ src/
 │   ├── logbook-preview.tsx              # A4 preview component
 │   └── entry-card.tsx                   # Dashboard entry card
 ├── lib/
-│   ├── supabase/client.ts               # Browser Supabase client
-│   ├── supabase/server.ts               # Server Supabase client
+│   ├── db.ts                            # Neon Serverless PostgreSQL connection
+│   ├── login-tracker.ts                 # Audit logging & database session tracking
 │   ├── pdf-generator.ts                 # jsPDF document generation
 │   ├── types.ts                         # TypeScript interfaces
 │   ├── validation.ts                    # Text verification logic

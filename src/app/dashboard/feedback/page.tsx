@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import type { RatingValue, SupervisorFeedback } from "@/lib/types";
 import { RATING_CRITERIA, RATING_OPTIONS } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
@@ -16,7 +15,6 @@ import {
 } from "lucide-react";
 
 export default function FeedbackPage() {
-  const supabase = createClient();
   const [feedbacks, setFeedbacks] = useState<SupervisorFeedback[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -27,23 +25,33 @@ export default function FeedbackPage() {
   }, []);
 
   async function fetchFeedbacks() {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const userId = (typeof window !== "undefined" && localStorage.getItem("ojt_user_id")) || "";
+    if (!userId) {
+      setLoading(false);
+      return;
+    }
 
-    const { data } = await supabase
-      .from("supervisor_feedback")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("from_date", { ascending: false });
-
-    if (data) setFeedbacks(data as SupervisorFeedback[]);
-    setLoading(false);
+    try {
+      const res = await fetch(`/api/feedback?userId=${encodeURIComponent(userId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.feedbacks) setFeedbacks(data.feedbacks as SupervisorFeedback[]);
+      }
+    } catch (err) {
+      console.error("Error loading feedback from Neon:", err);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this feedback?")) return;
-    await supabase.from("supervisor_feedback").delete().eq("id", id);
-    setFeedbacks((prev) => prev.filter((f) => f.id !== id));
+    try {
+      await fetch(`/api/feedback?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      setFeedbacks((prev) => prev.filter((f) => f.id !== id));
+    } catch (err) {
+      alert("Failed to delete feedback");
+    }
   }
 
   return (
@@ -138,7 +146,6 @@ export default function FeedbackPage() {
 // Feedback Form Component
 // ============================================================
 function FeedbackForm({ onSaved }: { onSaved: () => void }) {
-  const supabase = createClient();
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
 
@@ -170,8 +177,12 @@ function FeedbackForm({ onSaved }: { onSaved: () => void }) {
     e.preventDefault();
     setSaving(true);
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const userId = (typeof window !== "undefined" && localStorage.getItem("ojt_user_id")) || "";
+    if (!userId) {
+      alert("Please log in first.");
+      setSaving(false);
+      return;
+    }
 
     // Calculate total score
     const ratingValues: Record<string, number> = { good: 3, acceptable: 2, needs_improvement: 1 };
@@ -181,18 +192,27 @@ function FeedbackForm({ onSaved }: { onSaved: () => void }) {
       total += ratingValues[val] || 0;
     }
 
-    const { error } = await supabase.from("supervisor_feedback").insert({
-      user_id: user.id,
-      ...formData,
-      total_score: total,
-    });
+    try {
+      const res = await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          ...formData,
+          total_score: total,
+        }),
+      });
 
-    setSaving(false);
-    if (error) {
+      if (!res.ok) {
+        setStatus("error");
+      } else {
+        setStatus("success");
+        onSaved();
+      }
+    } catch {
       setStatus("error");
-    } else {
-      setStatus("success");
-      onSaved();
+    } finally {
+      setSaving(false);
     }
   }
 

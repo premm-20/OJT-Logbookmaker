@@ -50,7 +50,7 @@ export async function POST(request: Request) {
       : request.headers.get("x-real-ip") || "127.0.0.1";
     const userAgent = request.headers.get("user-agent") || "";
 
-    // Record login in persistent store (local file + Supabase)
+    // Record login in persistent store (local file + Neon PostgreSQL)
     const session = await recordUserLogin({
       name: name.trim(),
       email: cleanEmail,

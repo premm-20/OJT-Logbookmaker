@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import type { DailyEntry, Profile } from "@/lib/types";
 import { calculateHours } from "@/lib/utils";
 import {
@@ -22,7 +21,6 @@ import {
 import Link from "next/link";
 
 export default function LogbookPage() {
-  const supabase = createClient();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [entries, setEntries] = useState<DailyEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,25 +37,31 @@ export default function LogbookPage() {
 
   async function fetchData() {
     setLoading(true);
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
-      setLoading(false);
-      return;
+    const userId = (typeof window !== "undefined" && localStorage.getItem("ojt_user_id")) || "";
+
+    let prof: Profile | null = null;
+    let ents: DailyEntry[] = [];
+
+    if (userId) {
+      try {
+        const [profileRes, entriesRes] = await Promise.all([
+          fetch(`/api/profile?userId=${encodeURIComponent(userId)}`),
+          fetch(`/api/entries?userId=${encodeURIComponent(userId)}`),
+        ]);
+
+        if (profileRes.ok) {
+          const pData = await profileRes.json();
+          prof = pData.profile || null;
+        }
+
+        if (entriesRes.ok) {
+          const eData = await entriesRes.json();
+          ents = eData.entries || [];
+        }
+      } catch (err) {
+        console.error("Error fetching from Neon database:", err);
+      }
     }
-
-    const [profileRes, entriesRes] = await Promise.all([
-      supabase.from("profiles").select("*").eq("id", user.id).single(),
-      supabase
-        .from("daily_entries")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("date", { ascending: true }),
-    ]);
-
-    const prof = profileRes.data ? (profileRes.data as Profile) : null;
-    let ents = entriesRes.data ? (entriesRes.data as DailyEntry[]) : [];
 
     if (ents.length === 0 && typeof window !== "undefined") {
       try {
@@ -170,84 +174,70 @@ export default function LogbookPage() {
 
   async function handleSaveInPreview() {
     setSavingEntry(true);
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
+    const userId = (typeof window !== "undefined" && localStorage.getItem("ojt_user_id")) || "";
+    if (!userId) {
       alert("Please log in to save changes.");
       setSavingEntry(false);
       return;
     }
 
-    if (activeEntry?.id) {
-      // Update existing entry
-      const { error } = await supabase
-        .from("daily_entries")
-        .update({
-          date: activeDate,
-          start_time: activeStartTime,
-          end_time: activeEndTime,
-          department: activeDept,
-          designation: activeDesig,
-          my_space: activeMySpace,
-          tasks_carried_out: activeTasks,
-          key_learning_observations: activeKeyLearning,
-          tools_technology_used: activeTools,
-          special_achievements: activeSpecial,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", activeEntry.id);
+    const entryId = activeEntry?.id || `entry_${userId}_${Date.now()}`;
+    const payload = {
+      id: entryId,
+      user_id: userId,
+      date: activeDate || new Date().toISOString().split("T")[0],
+      start_time: activeStartTime,
+      end_time: activeEndTime,
+      department: activeDept,
+      designation: activeDesig,
+      original_text: `Day ${activeDayNumber}`,
+      my_space: activeMySpace,
+      tasks_carried_out: activeTasks,
+      key_learning_observations: activeKeyLearning,
+      tools_technology_used: activeTools,
+      special_achievements: activeSpecial,
+    };
 
-      if (error) {
-        alert("Failed to update: " + error.message);
+    try {
+      const res = await fetch("/api/entries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, entries: [payload] }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert("Failed to save: " + (data.error || "Server error"));
       } else {
-        // Refresh local entry in state
-        setEntries((prev) =>
-          prev.map((e) =>
-            e.id === activeEntry.id
-              ? {
-                  ...e,
-                  date: activeDate,
-                  start_time: activeStartTime,
-                  end_time: activeEndTime,
-                  department: activeDept,
-                  designation: activeDesig,
-                  my_space: activeMySpace,
-                  tasks_carried_out: activeTasks,
-                  key_learning_observations: activeKeyLearning,
-                  tools_technology_used: activeTools,
-                  special_achievements: activeSpecial,
-                }
-              : e
-          )
-        );
+        if (activeEntry?.id) {
+          setEntries((prev) =>
+            prev.map((e) =>
+              e.id === activeEntry.id
+                ? {
+                    ...e,
+                    date: activeDate,
+                    start_time: activeStartTime,
+                    end_time: activeEndTime,
+                    department: activeDept,
+                    designation: activeDesig,
+                    my_space: activeMySpace,
+                    tasks_carried_out: activeTasks,
+                    key_learning_observations: activeKeyLearning,
+                    tools_technology_used: activeTools,
+                    special_achievements: activeSpecial,
+                  }
+                : e
+            )
+          );
+        } else {
+          setEntries((prev) => [...prev, payload as DailyEntry]);
+        }
       }
-    } else {
-      // Insert new entry for this day
-      const { data, error } = await supabase
-        .from("daily_entries")
-        .insert({
-          user_id: user.id,
-          date: activeDate || new Date().toISOString().split("T")[0],
-          start_time: activeStartTime,
-          end_time: activeEndTime,
-          department: activeDept,
-          designation: activeDesig,
-          original_text: `Day ${activeDayNumber}`,
-          my_space: activeMySpace,
-          tasks_carried_out: activeTasks,
-          key_learning_observations: activeKeyLearning,
-          tools_technology_used: activeTools,
-          special_achievements: activeSpecial,
-        })
-        .select()
-        .single();
-
-      if (!error && data) {
-        setEntries((prev) => [...prev, data as DailyEntry]);
-      }
+    } catch (err: unknown) {
+      alert("Failed to save entry: " + (err instanceof Error ? err.message : "Network error"));
+    } finally {
+      setSavingEntry(false);
     }
-    setSavingEntry(false);
   }
 
   function formatEntriesForPdf(entriesList: DailyEntry[]): SingleDayData[] {

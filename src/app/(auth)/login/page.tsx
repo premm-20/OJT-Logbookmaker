@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import {
   User,
   Phone,
@@ -47,7 +46,6 @@ function LoginFormContent() {
   const [infoMessage, setInfoMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [showGoogleSetupModal, setShowGoogleSetupModal] = useState(false);
   const [challengeToken, setChallengeToken] = useState("");
 
   // Email auto-verification states
@@ -88,13 +86,7 @@ function LoginFormContent() {
     } else if (errCode === "access_denied") {
       setError("Google sign-in was canceled.");
     } else if (errCode) {
-      if (msg && msg.includes("Unable to exchange external code")) {
-        setError(
-          "Google OAuth Secret Mismatch: The Client Secret in your Supabase dashboard does not match your Google Cloud OAuth Client ID. Please copy the Client Secret (GOCSPX-...) from Google Cloud Console into Supabase."
-        );
-      } else {
-        setError(msg || "Authentication failed or session expired. Please try again.");
-      }
+      setError(msg || "Authentication failed or session expired. Please sign in below.");
     }
   }, [searchParams]);
 
@@ -177,7 +169,7 @@ function LoginFormContent() {
   };
 
   // ─────────────────────────────────────────────────────────────
-  // Action 1: Sign in with Google (Client-Side PKCE OAuth)
+  // Action 1: Sign in with Google (Neon Auth Social Sign-In)
   // ─────────────────────────────────────────────────────────────
   async function handleGoogleSignIn() {
     setError("");
@@ -185,61 +177,52 @@ function LoginFormContent() {
     setGoogleLoading(true);
 
     try {
-      // Pre-flight check: verify Supabase endpoint is reachable and Google provider is configured
-      const preflightRes = await fetch("/api/auth/google/oauth-url").catch(() => null);
-      if (preflightRes) {
-        const preflightData = await preflightRes.json().catch(() => null);
-        if (preflightData && !preflightData.enabled) {
-          const isNetworkError =
-            preflightData.error?.toLowerCase().includes("fetch failed") ||
-            preflightData.error?.toLowerCase().includes("not configured");
+      const neonAuthUrl =
+        process.env.NEXT_PUBLIC_NEON_AUTH_URL ||
+        "https://ep-long-feather-b59jje5f.neonauth.c-7.us-east-2.aws.neon.tech/neondb/auth";
 
-          setError(
-            isNetworkError
-              ? "Your Supabase Auth backend is currently unreachable (the free-tier project may be paused). Please restore your project in your Supabase Dashboard, or sign in below with your university email OTP."
-              : (preflightData.error || "Google Sign-In is not enabled on this Supabase project yet.")
-          );
-          setShowGoogleSetupModal(true);
-          setGoogleLoading(false);
+      const callbackURL = `${window.location.origin}/dashboard`;
+
+      const res = await fetch(`${neonAuthUrl}/sign-in/social`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          provider: "google",
+          callbackURL,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.url) {
+          window.location.href = data.url;
           return;
         }
       }
 
-      const supabase = createClient();
-      const redirectUrl = `${window.location.origin}/auth/callback`;
-
-      const { data, error: oauthError } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          redirectTo: redirectUrl,
-          queryParams: {
-            prompt: "select_account",
-          },
-        },
-      });
-
-      if (oauthError) {
-        console.warn("Supabase Google OAuth status:", oauthError.message);
-        if (
-          oauthError.message.toLowerCase().includes("not enabled") ||
-          oauthError.message.toLowerCase().includes("validation_failed")
-        ) {
-          setShowGoogleSetupModal(true);
-        } else {
-          setError(oauthError.message || "Failed to initiate Google Sign In.");
-        }
-        setGoogleLoading(false);
-        return;
-      }
-
-      if (data?.url) {
-        // Sets PKCE cookie in browser and redirects to Google OAuth screen
-        window.location.href = data.url;
+      // Fallback to university email verification
+      if (cleanEmail && isEmailPatternMatch) {
+        const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
+        await handleRequestOtp(fakeEvent);
+      } else {
+        setInfoMessage(
+          "Please enter your university details below to receive an instant access code directly in your Gmail."
+        );
+        document.getElementById("email")?.focus();
       }
     } catch (err: unknown) {
-      console.error("Google Sign In Error:", err);
-      const msg = err instanceof Error ? err.message : "Google authentication failed.";
-      setError(msg);
+      console.error("Neon Auth Google Sign-in error:", err);
+      if (cleanEmail && isEmailPatternMatch) {
+        const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
+        await handleRequestOtp(fakeEvent);
+      } else {
+        setError(
+          "Could not initialize Google Sign-In. Please sign in below with your official university email."
+        );
+      }
+    } finally {
       setGoogleLoading(false);
     }
   }
@@ -388,93 +371,6 @@ function LoginFormContent() {
 
   return (
     <div className="w-full max-w-md animate-fade-in relative">
-      {/* ───────────────────────────────────────────────────────────── */}
-      {/* PROFESSIONAL GOOGLE SETUP MODAL (Replaces ugly browser prompt) */}
-      {/* ───────────────────────────────────────────────────────────── */}
-      {showGoogleSetupModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-surface-900/60 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl shadow-2xl border border-surface-200 p-6 sm:p-7 max-w-md w-full relative animate-scale-up space-y-4">
-            <button
-              onClick={() => setShowGoogleSetupModal(false)}
-              className="absolute top-4 right-4 p-1.5 rounded-xl hover:bg-surface-100 text-surface-400 hover:text-surface-700 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-2xl bg-blue-50 flex items-center justify-center border border-blue-100 shrink-0">
-                <svg className="w-6 h-6" viewBox="0 0 24 24">
-                  <path
-                    fill="#4285F4"
-                    d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"
-                  />
-                  <path
-                    fill="#34A853"
-                    d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"
-                  />
-                  <path
-                    fill="#FBBC05"
-                    d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
-                  />
-                  <path
-                    fill="#EA4335"
-                    d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
-                  />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-surface-900">
-                  Google Workspace Single Sign-On
-                </h3>
-                <p className="text-xs text-surface-500">
-                  Supabase Authentication Configuration
-                </p>
-              </div>
-            </div>
-
-            <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200/80 text-xs text-amber-900 space-y-2 leading-relaxed">
-              <p className="font-semibold text-amber-950">
-                To enable live 1-click Google Single Sign-On for your domain:
-              </p>
-              <ol className="list-decimal pl-4 space-y-1.5 text-amber-800 text-[11px]">
-                <li>
-                  Open your{" "}
-                  <a
-                    href="https://supabase.com/dashboard/project/xxhblaowaorcraprgxmr/auth/providers"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-bold underline text-amber-950 inline-flex items-center gap-0.5"
-                  >
-                    Supabase Auth Providers Dashboard <ExternalLink className="w-2.5 h-2.5" />
-                  </a>
-                </li>
-                <li>
-                  Under <strong>Google</strong>, toggle <strong>Enable Google</strong> to ON.
-                </li>
-                <li>
-                  Paste your Google Cloud OAuth <strong>Client ID</strong> & <strong>Client Secret</strong>, and click Save.
-                </li>
-              </ol>
-            </div>
-
-            <div className="p-3 rounded-2xl bg-surface-50 border border-surface-200 text-xs text-surface-600">
-              <p className="font-semibold text-surface-800 mb-0.5">
-                💡 Instant Access:
-              </p>
-              <p className="text-[11px]">
-                You can immediately use the official email registration below to receive an instant verification link directly in your Gmail!
-              </p>
-            </div>
-
-            <button
-              onClick={() => setShowGoogleSetupModal(false)}
-              className="w-full py-2.5 rounded-xl bg-primary-600 hover:bg-primary-700 text-white font-bold text-xs transition-colors cursor-pointer"
-            >
-              Continue with Email Verification
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Main Login Card */}
       <div className="bg-white rounded-3xl shadow-2xl shadow-primary-900/10 border border-surface-200/80 p-8 sm:p-9 relative overflow-hidden">

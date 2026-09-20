@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { useParams, useRouter } from "next/navigation";
 import type { DailyEntry, Profile } from "@/lib/types";
 import { calculateHours } from "@/lib/utils";
@@ -19,7 +18,6 @@ import Link from "next/link";
 export default function EntryDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const supabase = createClient();
 
   const entryId = params.id as string;
 
@@ -50,82 +48,100 @@ export default function EntryDetailPage() {
 
   async function fetchEntryAndData() {
     setLoading(true);
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const userId = (typeof window !== "undefined" && localStorage.getItem("ojt_user_id")) || "";
 
-    if (!user) {
-      setLoading(false);
-      return;
-    }
+    try {
+      const [entryRes, allRes, profRes] = await Promise.all([
+        fetch(`/api/entries?entryId=${encodeURIComponent(entryId)}`),
+        userId ? fetch(`/api/entries?userId=${encodeURIComponent(userId)}`) : Promise.resolve(null),
+        userId ? fetch(`/api/profile?userId=${encodeURIComponent(userId)}`) : Promise.resolve(null),
+      ]);
 
-    const [entryRes, allRes, profRes] = await Promise.all([
-      supabase.from("daily_entries").select("*").eq("id", entryId).single(),
-      supabase
-        .from("daily_entries")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("date", { ascending: true }),
-      supabase.from("profiles").select("*").eq("id", user.id).single(),
-    ]);
+      if (entryRes.ok) {
+        const eData = await entryRes.json();
+        if (eData?.entry) {
+          const e = eData.entry as DailyEntry;
+          setEntry(e);
+          setDate(e.date);
+          setStartTime(e.start_time || "09:00 AM");
+          setEndTime(e.end_time || "05:00 PM");
+          setDepartment(e.department);
+          setDesignation(e.designation);
+          setMySpace(e.my_space);
+          setTasksCarriedOut(e.tasks_carried_out);
+          setKeyLearningObservations(e.key_learning_observations);
+          setToolsTechnologyUsed(e.tools_technology_used);
+          setSpecialAchievements(e.special_achievements);
 
-    if (entryRes.data) {
-      const e = entryRes.data as DailyEntry;
-      setEntry(e);
-      setDate(e.date);
-      setStartTime(e.start_time || "09:00 AM");
-      setEndTime(e.end_time || "05:00 PM");
-      setDepartment(e.department);
-      setDesignation(e.designation);
-      setMySpace(e.my_space);
-      setTasksCarriedOut(e.tasks_carried_out);
-      setKeyLearningObservations(e.key_learning_observations);
-      setToolsTechnologyUsed(e.tools_technology_used);
-      setSpecialAchievements(e.special_achievements);
-
-      const match = (e.original_text || e.my_space || "").match(
-        /(?:day\s*([0-9]+)|day-([0-9]+))/i
-      );
-      if (match) {
-        const d = parseInt(match[1] || match[2], 10);
-        if (d >= 1 && d <= 76) setDayNumber(d);
+          const match = (e.original_text || e.my_space || "").match(
+            /(?:day\s*([0-9]+)|day-([0-9]+))/i
+          );
+          if (match) {
+            const d = parseInt(match[1] || match[2], 10);
+            if (d >= 1 && d <= 76) setDayNumber(d);
+          }
+        }
       }
-    }
 
-    if (allRes.data) {
-      setAllEntries(allRes.data as DailyEntry[]);
-    }
-    if (profRes.data) {
-      setProfile(profRes.data as Profile);
-    }
+      if (allRes && allRes.ok) {
+        const allData = await allRes.json();
+        if (allData?.entries) {
+          setAllEntries(allData.entries as DailyEntry[]);
+        }
+      }
 
-    setLoading(false);
+      if (profRes && profRes.ok) {
+        const pData = await profRes.json();
+        if (pData?.profile) {
+          setProfile(pData.profile as Profile);
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching entry from Neon:", err);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function handleSave() {
     setSaving(true);
-    const { error } = await supabase
-      .from("daily_entries")
-      .update({
-        date,
-        start_time: startTime,
-        end_time: endTime,
-        department,
-        designation,
-        my_space: mySpace,
-        tasks_carried_out: tasksCarriedOut,
-        key_learning_observations: keyLearningObservations,
-        tools_technology_used: toolsTechnologyUsed,
-        special_achievements: specialAchievements,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", entryId);
+    const userId = (typeof window !== "undefined" && localStorage.getItem("ojt_user_id")) || "";
 
-    setSaving(false);
-    if (!error) {
-      router.refresh();
-    } else {
-      alert("Failed to save changes: " + error.message);
+    try {
+      const res = await fetch("/api/entries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          entries: [
+            {
+              id: entryId,
+              user_id: userId,
+              date,
+              start_time: startTime,
+              end_time: endTime,
+              department,
+              designation,
+              my_space: mySpace,
+              tasks_carried_out: tasksCarriedOut,
+              key_learning_observations: keyLearningObservations,
+              tools_technology_used: toolsTechnologyUsed,
+              special_achievements: specialAchievements,
+            },
+          ],
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert("Failed to save changes: " + (data.error || "Server error"));
+      } else {
+        router.refresh();
+      }
+    } catch (err: unknown) {
+      alert("Failed to save changes: " + (err instanceof Error ? err.message : "Network error"));
+    } finally {
+      setSaving(false);
     }
   }
 
