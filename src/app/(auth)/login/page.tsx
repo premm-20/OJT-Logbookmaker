@@ -184,6 +184,26 @@ function LoginFormContent() {
     setGoogleLoading(true);
 
     try {
+      // Pre-flight check: verify Supabase endpoint is reachable and Google provider is configured
+      const preflightRes = await fetch("/api/auth/google/oauth-url").catch(() => null);
+      if (preflightRes) {
+        const preflightData = await preflightRes.json().catch(() => null);
+        if (preflightData && !preflightData.enabled) {
+          const isNetworkError =
+            preflightData.error?.toLowerCase().includes("fetch failed") ||
+            preflightData.error?.toLowerCase().includes("not configured");
+
+          setError(
+            isNetworkError
+              ? "Your Supabase Auth backend is currently unreachable (the free-tier project may be paused). Please restore your project in your Supabase Dashboard, or sign in below with your university email OTP."
+              : (preflightData.error || "Google Sign-In is not enabled on this Supabase project yet.")
+          );
+          setShowGoogleSetupModal(true);
+          setGoogleLoading(false);
+          return;
+        }
+      }
+
       const supabase = createClient();
       const redirectUrl = `${window.location.origin}/auth/callback`;
 
