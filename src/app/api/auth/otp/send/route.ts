@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { verifyUniversityEmail } from "@/lib/email-verifier";
 import { generateAndStoreOtp } from "@/lib/otp-store";
+import { sendVerificationEmail } from "@/lib/email-service";
 
 export async function POST(request: Request) {
   try {
@@ -33,39 +34,54 @@ export async function POST(request: Request) {
       );
     }
 
-    // 1. Trigger Supabase Auth to send OTP directly to the user's Gmail inbox
+    // 1. Generate 6-digit OTP & secure magic link token
+    const { otp, token } = generateAndStoreOtp(cleanEmail, trimmedName, cleanMobile);
+
+    // Compute request base URL
+    const host = request.headers.get("host") || "localhost:3000";
+    const protocol = host.includes("localhost") ? "http" : "https";
+    const magicLinkUrl = `${protocol}://${host}/api/auth/otp/verify-link?email=${encodeURIComponent(cleanEmail)}&token=${token}`;
+
+    // 2. Dispatch real email via SMTP / Resend
+    const sendResult = await sendVerificationEmail({
+      to: cleanEmail,
+      name: trimmedName,
+      otp,
+      magicLinkUrl,
+    });
+
+    // 3. Also trigger Supabase Auth (if custom SMTP enabled in Supabase)
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-    let emailDispatched = false;
     if (supabaseUrl && supabaseKey) {
       try {
         const supabase = createClient(supabaseUrl, supabaseKey);
-        const { error: otpError } = await supabase.auth.signInWithOtp({
+        await supabase.auth.signInWithOtp({
           email: cleanEmail,
           options: {
             shouldCreateUser: true,
+            emailRedirectTo: `${protocol}://${host}/auth/callback`,
+            data: {
+              name: trimmedName,
+              full_name: trimmedName,
+              mobile: cleanMobile,
+            },
           },
         });
-
-        if (!otpError) {
-          emailDispatched = true;
-        } else {
-          console.warn("Supabase signInWithOtp note:", otpError.message);
-        }
       } catch (err) {
-        console.warn("Supabase client error:", err);
+        console.warn("Supabase auth trigger note:", err);
       }
     }
 
-    // 2. Also register in local backup store so verification is 100% resilient
-    generateAndStoreOtp(cleanEmail);
-
     return NextResponse.json({
       success: true,
-      emailDispatched,
-      message: `A 6-digit verification code has been dispatched to your official Gmail (${cleanEmail}). Please check your inbox and spam folder.`,
       email: cleanEmail,
+      deliveryMode: sendResult.deliveryMode,
+      configured: sendResult.configured,
+      message: sendResult.configured
+        ? `A 6-digit verification code and login link have been dispatched to your Gmail (${cleanEmail}). Please check your inbox and spam folder.`
+        : `Verification code generated for ${cleanEmail}. In development mode without SMTP configured, code is logged to your terminal console.`,
+      debugCode: !sendResult.configured ? otp : undefined,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Failed to send verification code";

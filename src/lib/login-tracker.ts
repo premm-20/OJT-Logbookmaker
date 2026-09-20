@@ -221,3 +221,18 @@ export async function getAllUserLogins(): Promise<{
 
   return { sessions, users };
 }
+
+export async function getRegisteredUser(email: string): Promise<UserSummary | null> {
+  const cleanEmail = (email || "").trim().toLowerCase();
+  if (!cleanEmail) return null;
+
+  const { users } = await getAllUserLogins();
+  const match = users.find((u) => u.email.toLowerCase() === cleanEmail);
+  return match || null;
+}
+
+export async function isUserRegistered(email: string): Promise<boolean> {
+  const user = await getRegisteredUser(email);
+  return !!user;
+}
+
