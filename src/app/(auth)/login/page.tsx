@@ -174,21 +174,124 @@ function LoginFormContent() {
     if (error) setError("");
   };
 
+  // Load Google Identity Services script
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const scriptId = "google-gsi-client";
+    if (!document.getElementById(scriptId)) {
+      const script = document.createElement("script");
+      script.id = scriptId;
+      script.src = "https://accounts.google.com/gsi/client";
+      script.async = true;
+      script.defer = true;
+      script.onload = () => {
+        initGoogleGsi();
+      };
+      document.body.appendChild(script);
+    } else {
+      initGoogleGsi();
+    }
+
+    function initGoogleGsi() {
+      // @ts-expect-error google GSI global
+      if (window.google?.accounts?.id) {
+        try {
+          // @ts-expect-error google GSI global
+          window.google.accounts.id.initialize({
+            client_id:
+              "516759701042-1j43chkqtgl8hf49j0cql8gf34sun3e9.apps.googleusercontent.com",
+            callback: handleGoogleCredentialResponse,
+            auto_select: false,
+            cancel_on_tap_outside: true,
+          });
+          const btnElem = document.getElementById("google-gsi-btn-container");
+          if (btnElem) {
+            // @ts-expect-error google GSI global
+            window.google.accounts.id.renderButton(btnElem, {
+              theme: "outline",
+              size: "large",
+              text: "continue_with",
+              shape: "pill",
+              width: 320,
+            });
+          }
+        } catch (e) {
+          console.warn("[GSI] init error:", e);
+        }
+      }
+    }
+  }, []);
+
+  async function handleGoogleCredentialResponse(response: { credential?: string }) {
+    if (!response.credential) {
+      setError("Failed to receive Google credentials. Please try again.");
+      return;
+    }
+    setGoogleLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/auth/google/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential: response.credential }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Google authentication failed.");
+      }
+      if (data.user) {
+        localStorage.setItem("ojt_user_id", data.user.id);
+        localStorage.setItem("ojt_user_name", data.user.name);
+        localStorage.setItem("ojt_user_login_email", data.user.email);
+        localStorage.setItem("ojt_user_mobile", data.user.mobile || "");
+      }
+      window.location.href = data.redirect || "/dashboard";
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Google authentication failed.";
+      setError(msg);
+      setGoogleLoading(false);
+    }
+  }
+
   // ─────────────────────────────────────────────────────────────
-  // Action 1: Sign in with Google (Direct Server Route via Neon Auth)
+  // Action 1: Sign in with Google (GIS / Direct)
   // ─────────────────────────────────────────────────────────────
   function handleGoogleSignIn() {
     setError("");
     setInfoMessage("");
     setGoogleLoading(true);
-    window.location.href = "/api/auth/google/signin";
+
+    // @ts-expect-error google GSI global
+    if (window.google?.accounts?.id) {
+      try {
+        // @ts-expect-error google GSI global
+        window.google.accounts.id.prompt((notification: any) => {
+          if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+            setGoogleLoading(false);
+            setError(
+              "Google One-Tap is not enabled in this browser window. Enter your university Gmail below to receive an instant verification code and direct login link."
+            );
+            document.getElementById("email")?.focus();
+          }
+        });
+        return;
+      } catch (e) {
+        console.warn("[GSI] prompt error:", e);
+      }
+    }
+
+    setGoogleLoading(false);
+    setError(
+      "Please enter your university Gmail address below to receive an instant verification code."
+    );
+    document.getElementById("email")?.focus();
   }
 
   // ─────────────────────────────────────────────────────────────
   // Action 2: First-Time Registration - Send OTP to Gmail
   // ─────────────────────────────────────────────────────────────
-  async function handleRequestOtp(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleRequestOtp(e?: React.FormEvent) {
+    if (e) e.preventDefault();
     setError("");
     setInfoMessage("");
 
@@ -345,18 +448,50 @@ function LoginFormContent() {
         <div className="absolute -top-16 -right-16 w-36 h-36 bg-primary-500/10 rounded-full blur-2xl pointer-events-none" />
 
         {/* Header */}
-        <div className="text-center mb-6">
-          <div className="w-13 h-13 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center mx-auto mb-3.5 shadow-lg shadow-primary-500/25">
+        <div className="text-center mb-5">
+          <div className="w-13 h-13 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center mx-auto mb-3 shadow-lg shadow-primary-500/25">
             <BookOpen className="w-6 h-6 text-white" />
           </div>
           <h2 className="text-2xl font-black text-surface-900 tracking-tight">
-            {step === "details" ? "Student Portal Login" : "Check Your University Gmail"}
+            Student Portal Login
           </h2>
           <p className="text-xs text-surface-600 mt-1">
-            {step === "details"
-              ? "Official On-the-Job Training (OJT) Logbook System"
-              : `A 6-digit verification code was sent to ${cleanEmail}`}
+            Official On-the-Job Training (OJT) Logbook System
           </p>
+        </div>
+
+        {/* 2-Step Tab Navigation */}
+        <div className="flex rounded-2xl bg-surface-100 p-1 mb-5 border border-surface-200">
+          <button
+            type="button"
+            onClick={() => {
+              setStep("details");
+              setError("");
+            }}
+            className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+              step === "details"
+                ? "bg-white text-surface-900 shadow-sm"
+                : "text-surface-500 hover:text-surface-700"
+            }`}
+          >
+            <Mail className="w-3.5 h-3.5 text-primary-600" />
+            <span>1. Request Code</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setStep("otp");
+              setError("");
+            }}
+            className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+              step === "otp"
+                ? "bg-white text-surface-900 shadow-sm"
+                : "text-surface-500 hover:text-surface-700"
+            }`}
+          >
+            <KeyRound className="w-3.5 h-3.5 text-emerald-600" />
+            <span>2. Enter 6-Digit OTP</span>
+          </button>
         </div>
 
         {/* Error notification */}
@@ -394,6 +529,7 @@ function LoginFormContent() {
           <div className="space-y-5">
             {/* 1-Click Official Google Sign-In */}
             <div>
+              <div id="google-gsi-btn-container" className="flex justify-center mb-1" />
               <button
                 type="button"
                 onClick={handleGoogleSignIn}
@@ -578,17 +714,12 @@ function LoginFormContent() {
                 <button
                   type="button"
                   onClick={() => {
-                    if (!cleanEmail) {
-                      setError("Please enter your university Gmail address above first.");
-                      document.getElementById("email")?.focus();
-                      return;
-                    }
                     setError("");
                     setStep("otp");
                   }}
                   className="text-xs font-bold text-primary-600 hover:text-primary-800 underline transition-colors cursor-pointer"
                 >
-                  Already received code in Gmail? Enter OTP &rarr;
+                  Already received code in Gmail? Click here to enter OTP &rarr;
                 </button>
               </div>
             </form>
@@ -605,12 +736,14 @@ function LoginFormContent() {
                 <span>Verification Email Dispatched</span>
               </div>
               <p className="text-[11px] text-emerald-700 leading-relaxed">
-                We sent a verification email with a direct login link to:
+                Check your university Gmail inbox:
                 <br />
-                <strong className="font-mono text-xs text-emerald-950">{cleanEmail}</strong>
+                <strong className="font-mono text-xs text-emerald-950">
+                  {cleanEmail || "student.name@medhaviskillsuniversity.edu.in"}
+                </strong>
               </p>
               <p className="text-[11px] text-emerald-800 bg-emerald-100/60 p-2 rounded-xl font-medium">
-                💡 <strong>Quick Login:</strong> You can click <strong>"Confirm email address"</strong> directly inside the email in your Gmail to log in instantly, or enter the code below.
+                💡 <strong>Instant Login:</strong> Click <strong>"Confirm email address"</strong> inside the email in your Gmail to login with 1 click, or enter the code below.
               </p>
               <div className="pt-1 flex items-center justify-between border-t border-emerald-200/60">
                 <span className="text-[10px] text-emerald-600">Check inbox or spam folder</span>
@@ -626,18 +759,24 @@ function LoginFormContent() {
               </div>
             </div>
 
-            {/* Optional developer fallback note when SMTP not yet in .env */}
-            {deliveryStatus && !deliveryStatus.configured && deliveryStatus.debugCode && (
-              <div className="p-3 rounded-xl bg-surface-50 border border-surface-200 text-[11px] text-surface-600">
-                <p className="font-bold text-surface-800 flex items-center gap-1 mb-1">
-                  <Sparkles className="w-3.5 h-3.5 text-primary-500" />
-                  Local Development Notice
-                </p>
-                <p>
-                  To send emails to your real Gmail inbox, set <code>SMTP_USER</code> and <code>SMTP_PASS</code> (Gmail App Password) in your <code>.env.local</code>.
-                </p>
+            {/* Email Input for OTP confirmation */}
+            <div>
+              <label htmlFor="otp-email" className="block text-xs font-bold text-surface-800 uppercase tracking-wider mb-1.5">
+                University Gmail ID
+              </label>
+              <div className="relative">
+                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400" />
+                <input
+                  id="otp-email"
+                  type="email"
+                  value={email}
+                  onChange={handleEmailChange}
+                  placeholder="student.name@medhaviskillsuniversity.edu.in"
+                  required
+                  className="w-full pl-10.5 pr-4 py-2.5 rounded-2xl border border-surface-200 bg-surface-50 text-sm font-semibold text-surface-900 focus:bg-white focus:border-primary-500 focus:outline-none focus:ring-3 focus:ring-primary-500/15"
+                />
               </div>
-            )}
+            </div>
 
             {/* OTP Input */}
             <div>
@@ -655,7 +794,7 @@ function LoginFormContent() {
                   required
                   autoFocus
                   inputMode="numeric"
-                  className="w-full text-center tracking-[0.6em] text-xl font-bold py-3 pl-10 pr-4 rounded-2xl border border-surface-200 bg-surface-50 text-surface-900 focus:bg-white focus:border-primary-500 focus:outline-none focus:ring-3 focus:ring-primary-500/15 transition-all"
+                  className="w-full text-center tracking-[0.6em] text-xl font-bold py-3 pl-10 pr-4 rounded-2xl border border-surface-200 bg-surface-50 text-surface-900 focus:bg-white focus:border-emerald-500 focus:outline-none focus:ring-3 focus:ring-emerald-500/15 transition-all"
                 />
               </div>
             </div>
@@ -663,7 +802,7 @@ function LoginFormContent() {
             {/* Verify Button */}
             <button
               type="submit"
-              disabled={loading || otp.length !== 6}
+              disabled={loading || otp.length !== 6 || !cleanEmail}
               className="w-full mt-2 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-700 text-white font-bold text-sm hover:from-emerald-700 hover:to-teal-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/25 transition-all cursor-pointer"
             >
               {loading ? (
@@ -674,7 +813,7 @@ function LoginFormContent() {
               ) : (
                 <>
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>Verify & Open Dashboard</span>
+                  <span>Verify & Access Portal</span>
                 </>
               )}
             </button>
@@ -685,18 +824,17 @@ function LoginFormContent() {
                 type="button"
                 onClick={() => {
                   setStep("details");
-                  setOtp("");
                   setError("");
                 }}
                 className="font-semibold text-surface-500 hover:text-surface-800 flex items-center gap-1 cursor-pointer"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
-                <span>Edit Details</span>
+                <span>Change Registration Details</span>
               </button>
 
               <button
                 type="button"
-                onClick={handleRequestOtp}
+                onClick={() => handleRequestOtp()}
                 disabled={loading || resendCooldown > 0}
                 className="font-bold text-primary-700 hover:text-primary-800 disabled:text-surface-400 disabled:cursor-not-allowed flex items-center gap-1 cursor-pointer"
               >

@@ -92,7 +92,9 @@ export async function GET(request: Request) {
     console.error("[Auth Callback] Error verifying Neon session:", err);
   }
 
-  // Fallback: If verifier is present but get-session failed cross-site, check if session is available
-  const forwardUrl = new URL("/dashboard", origin);
-  return NextResponse.redirect(forwardUrl);
+  // Fallback: If verifier failed or session is unavailable, redirect to login with informative message
+  const loginUrl = new URL("/login", origin);
+  loginUrl.searchParams.set("error", "google_neon_failed");
+  loginUrl.searchParams.set("msg", "Google authentication could not be completed via Neon Auth. Please use your university email OTP below to log in.");
+  return NextResponse.redirect(loginUrl);
 }
