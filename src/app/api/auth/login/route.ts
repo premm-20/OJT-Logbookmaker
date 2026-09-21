@@ -68,15 +68,19 @@ export async function POST(request: Request) {
       phone_number: session.mobile,
       learner_name: session.name,
       loginTime: session.loginAt,
+      verifiedWithOtp: true,
     };
+
+    const sessionCookieVal = encodeURIComponent(JSON.stringify(sessionData));
 
     const response = NextResponse.json({
       success: true,
       user: sessionData,
+      redirect: "/dashboard",
     });
 
     // Set cookie valid for 30 days
-    response.cookies.set("ojt_session", JSON.stringify(sessionData), {
+    response.cookies.set("ojt_session", sessionCookieVal, {
       path: "/",
       maxAge: 60 * 60 * 24 * 30, // 30 days
       sameSite: "lax",

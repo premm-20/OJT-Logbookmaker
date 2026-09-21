@@ -282,13 +282,95 @@ function LoginFormContent() {
 
     setGoogleLoading(false);
     setError(
-      "Please enter your university Gmail address below to receive an instant verification code."
+      "Please enter your university Gmail address below to sign in."
     );
     document.getElementById("email")?.focus();
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Action 2: First-Time Registration - Send OTP to Gmail
+  // Action 2: Direct Instant Portal Login (Fastest, zero wait)
+  // ─────────────────────────────────────────────────────────────
+  async function handleDirectLogin(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setInfoMessage("");
+
+    const trimmedName = name.trim();
+    if (!trimmedName || trimmedName.length < 2) {
+      setError("Please enter your full name (at least 2 characters).");
+      return;
+    }
+
+    if (!cleanEmail) {
+      setError("Please enter your university email address.");
+      return;
+    }
+
+    if (!isEmailPatternMatch) {
+      setError(
+        "Only official university email IDs (@medhaviskillsuniversity.edu.in) are permitted."
+      );
+      return;
+    }
+
+    if (mobile.length !== 10) {
+      setError("Mobile number must be exactly 10 digits.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: trimmedName,
+          email: cleanEmail,
+          mobile: mobile,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to sign in.");
+      }
+
+      const userId = data.user?.id || `usr_${mobile}`;
+
+      try {
+        localStorage.setItem("ojt_user_id", userId);
+        localStorage.setItem("ojt_user_name", trimmedName);
+        localStorage.setItem("ojt_user_mobile", mobile);
+        localStorage.setItem("ojt_user_login_email", cleanEmail);
+
+        const userProfileKey = `ojt_user_profile_${userId}`;
+        const existingProfile =
+          localStorage.getItem(userProfileKey) ||
+          localStorage.getItem("ojt_user_profile");
+        const parsedProfile = existingProfile ? JSON.parse(existingProfile) : {};
+
+        const updatedProfile = {
+          ...parsedProfile,
+          learner_name: trimmedName,
+          phone_number: mobile,
+          email_id: cleanEmail,
+        };
+
+        localStorage.setItem("ojt_user_profile", JSON.stringify(updatedProfile));
+        localStorage.setItem(userProfileKey, JSON.stringify(updatedProfile));
+      } catch {}
+
+      window.location.href = data.redirect || "/dashboard";
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Sign in failed.";
+      setError(msg);
+      setLoading(false);
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Action 3: Send OTP to Gmail
   // ─────────────────────────────────────────────────────────────
   async function handleRequestOtp(e?: React.FormEvent) {
     if (e) e.preventDefault();
@@ -575,7 +657,7 @@ function LoginFormContent() {
             </div>
 
             {/* University Email Registration / Sign In Form */}
-            <form onSubmit={handleRequestOtp} className="space-y-4">
+            <form onSubmit={handleDirectLogin} className="space-y-4">
               {/* Full Name */}
               <div>
                 <label htmlFor="name" className="block text-xs font-bold text-surface-800 uppercase tracking-wider mb-1.5">
@@ -690,7 +772,7 @@ function LoginFormContent() {
                 </div>
               </div>
 
-              {/* Submit Button */}
+              {/* Primary Action: Direct Portal Sign In */}
               <button
                 type="submit"
                 disabled={loading || !isDetailsComplete}
@@ -699,27 +781,35 @@ function LoginFormContent() {
                 {loading ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Dispatching Verification Link & OTP...</span>
+                    <span>Signing into Portal...</span>
                   </>
                 ) : (
                   <>
-                    <span>Send Verification Code to Gmail</span>
+                    <span>Enter Student Portal</span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}
               </button>
 
-              {/* Already have code shortcut */}
-              <div className="text-center pt-1">
+              {/* Secondary Options */}
+              <div className="flex items-center justify-between pt-1 px-1 text-xs">
+                <button
+                  type="button"
+                  onClick={() => handleRequestOtp()}
+                  disabled={loading || !cleanEmail}
+                  className="font-semibold text-surface-600 hover:text-primary-700 underline transition-colors cursor-pointer"
+                >
+                  Send OTP to Gmail &rarr;
+                </button>
                 <button
                   type="button"
                   onClick={() => {
                     setError("");
                     setStep("otp");
                   }}
-                  className="text-xs font-bold text-primary-600 hover:text-primary-800 underline transition-colors cursor-pointer"
+                  className="font-bold text-emerald-700 hover:text-emerald-900 underline transition-colors cursor-pointer"
                 >
-                  Already received code in Gmail? Click here to enter OTP &rarr;
+                  Enter OTP Code &rarr;
                 </button>
               </div>
             </form>
