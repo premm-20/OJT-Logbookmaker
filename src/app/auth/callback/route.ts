@@ -34,6 +34,16 @@ export async function GET(request: Request) {
         const email = (data.user.email || "").toLowerCase();
         const name = data.user.name || email.split("@")[0];
 
+        const isUniEmail =
+          email.endsWith("@medhaviskillsuniversity.edu.in") ||
+          email.endsWith("@medhaviskills.university.edu.in");
+
+        if (!isUniEmail) {
+          return NextResponse.redirect(
+            `${origin}/login?error=unauthorized_domain&email=${encodeURIComponent(email)}`
+          );
+        }
+
         const session = await recordUserLogin({
           name,
           email,

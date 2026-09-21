@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { authClient } from "@/lib/auth-client";
 import {
   User,
   Phone,
@@ -254,37 +255,25 @@ function LoginFormContent() {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Action 1: Sign in with Google (GIS / Direct)
+  // Action 1: Sign in with Google (Neon Auth / Better Auth)
   // ─────────────────────────────────────────────────────────────
-  function handleGoogleSignIn() {
+  async function handleGoogleSignIn() {
     setError("");
     setInfoMessage("");
     setGoogleLoading(true);
 
-    // @ts-expect-error google GSI global
-    if (window.google?.accounts?.id) {
-      try {
-        // @ts-expect-error google GSI global
-        window.google.accounts.id.prompt((notification: any) => {
-          if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-            setGoogleLoading(false);
-            setError(
-              "Google One-Tap is not enabled in this browser window. Enter your university Gmail below to receive an instant verification code and direct login link."
-            );
-            document.getElementById("email")?.focus();
-          }
-        });
-        return;
-      } catch (e) {
-        console.warn("[GSI] prompt error:", e);
-      }
+    try {
+      await authClient.signIn.social({
+        provider: "google",
+        callbackURL: `${window.location.origin}/auth/callback`,
+      });
+    } catch (err: unknown) {
+      console.error("[Neon Auth Google Sign-in Error]:", err);
+      const msg =
+        err instanceof Error ? err.message : "Failed to initiate Google sign-in via Neon Auth";
+      setError(msg);
+      setGoogleLoading(false);
     }
-
-    setGoogleLoading(false);
-    setError(
-      "Please enter your university Gmail address below to sign in."
-    );
-    document.getElementById("email")?.focus();
   }
 
   // ─────────────────────────────────────────────────────────────
