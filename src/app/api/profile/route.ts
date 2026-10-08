@@ -1,14 +1,39 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { getSession, unauthorized } from "@/lib/auth/session";
 
-export async function GET(request: Request) {
+// The profile always belongs to the signed-in student (from the session cookie).
+
+// Older databases were created without these columns, which made every
+// profile read and save fail. Add them once, additively.
+let columnsReady: Promise<void> | null = null;
+function ensureProfileColumns(): Promise<void> {
+  if (!columnsReady) {
+    columnsReady = (async () => {
+      const sql = getDb();
+      await sql`
+        ALTER TABLE user_profiles
+          ADD COLUMN IF NOT EXISTS registration_number VARCHAR DEFAULT '',
+          ADD COLUMN IF NOT EXISTS semester VARCHAR DEFAULT '',
+          ADD COLUMN IF NOT EXISTS location VARCHAR DEFAULT '',
+          ADD COLUMN IF NOT EXISTS industry_partner_name VARCHAR DEFAULT '',
+          ADD COLUMN IF NOT EXISTS department VARCHAR DEFAULT '',
+          ADD COLUMN IF NOT EXISTS designation VARCHAR DEFAULT ''
+      `;
+    })().catch((err) => {
+      columnsReady = null;
+      throw err;
+    });
+  }
+  return columnsReady;
+}
+
+export async function GET() {
   try {
-    const { searchParams } = new URL(request.url);
-    const userId = searchParams.get("userId") || "";
-
-    if (!userId) {
-      return NextResponse.json({ error: "userId required" }, { status: 400 });
-    }
+    const session = await getSession();
+    if (!session) return unauthorized();
+    const userId = session.id;
+    await ensureProfileColumns();
 
     const sql = getDb();
     const rows = await sql`
@@ -59,10 +84,11 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const session = await getSession();
+    if (!session) return unauthorized();
+
     const body = await request.json();
     const {
-      user_id,
-      id,
       learner_name,
       registration_number,
       enrollment_no,
@@ -77,15 +103,14 @@ export async function POST(request: Request) {
       supervisor_name,
       supervisor_contact,
       phone_number,
-      email_id,
       ojt_start_date,
       ojt_end_date,
     } = body;
 
-    const targetUserId = user_id || id;
-    if (!targetUserId) {
-      return NextResponse.json({ error: "user_id is required" }, { status: 400 });
-    }
+    const targetUserId = session.id;
+    await ensureProfileColumns();
+    // The login email is the learner's email on the logbook cover.
+    const email_id = session.email;
 
     const regNo = registration_number || enrollment_no || "";
     const indPartner = industry_partner_name || industry_partner || "";
@@ -124,7 +149,7 @@ export async function POST(request: Request) {
         updated_at = NOW();
     `;
 
-    return NextResponse.json({ success: true, message: "Profile saved to Neon PostgreSQL" });
+    return NextResponse.json({ success: true, message: "Profile saved." });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Failed to save profile";
     return NextResponse.json({ error: msg }, { status: 500 });

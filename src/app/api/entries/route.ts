@@ -1,10 +1,17 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { getSession, unauthorized } from "@/lib/auth/session";
+
+// The signed-in student is always taken from the session cookie. Any userId
+// sent by the browser is ignored, so one student can't read another's logbook.
 
 export async function GET(request: Request) {
   try {
+    const session = await getSession();
+    if (!session) return unauthorized();
+    const userId = session.id;
+
     const { searchParams } = new URL(request.url);
-    const userId = searchParams.get("userId") || "";
     const entryId = searchParams.get("entryId") || "";
 
     const sql = getDb();
@@ -13,14 +20,10 @@ export async function GET(request: Request) {
       const rows = await sql`
         SELECT *
         FROM daily_entries
-        WHERE id = ${entryId}
+        WHERE id = ${entryId} AND user_id = ${userId}
         LIMIT 1;
       `;
       return NextResponse.json({ entry: rows[0] || null });
-    }
-
-    if (!userId) {
-      return NextResponse.json({ entries: [] });
     }
 
     const rows = await sql`
@@ -39,11 +42,14 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const session = await getSession();
+    if (!session) return unauthorized();
+    const userId = session.id;
+
     const body = await request.json();
     const sql = getDb();
 
     // Support both single entry save or array of entries
-    const userId = body.userId || body.user_id;
     let entries = body.entries;
 
     if (!entries && (body.date || body.tasks_carried_out || body.id)) {
@@ -58,8 +64,7 @@ export async function POST(request: Request) {
     }
 
     for (const entry of entries) {
-      const targetUserId = entry.user_id || userId;
-      if (!targetUserId) continue;
+      const targetUserId = userId;
 
       const entryId = entry.id || `entry_${targetUserId}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
       const date = entry.date || new Date().toISOString().split("T")[0];
@@ -97,14 +102,15 @@ export async function POST(request: Request) {
           key_learning_observations = EXCLUDED.key_learning_observations,
           tools_technology_used = EXCLUDED.tools_technology_used,
           special_achievements = EXCLUDED.special_achievements,
-          updated_at = NOW();
+          updated_at = NOW()
+        WHERE daily_entries.user_id = EXCLUDED.user_id;
       `;
     }
 
     return NextResponse.json({
       success: true,
       savedCount: entries.length,
-      message: `Successfully synchronized ${entries.length} logbook entries to Neon PostgreSQL`,
+      message: `Saved ${entries.length} logbook ${entries.length === 1 ? "entry" : "entries"}.`,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Failed to save logbook entries";
@@ -114,6 +120,9 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
+    const session = await getSession();
+    if (!session) return unauthorized();
+
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id") || "";
 
@@ -122,7 +131,7 @@ export async function DELETE(request: Request) {
     }
 
     const sql = getDb();
-    await sql`DELETE FROM daily_entries WHERE id = ${id};`;
+    await sql`DELETE FROM daily_entries WHERE id = ${id} AND user_id = ${session.id};`;
 
     return NextResponse.json({ success: true });
   } catch (err: unknown) {

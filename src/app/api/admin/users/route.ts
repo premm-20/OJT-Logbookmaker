@@ -1,12 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getAllUserLogins } from "@/lib/login-tracker";
+import { ADMIN_COOKIE, readAdminToken } from "@/lib/auth/admin";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   try {
-    const adminToken = request.cookies.get("ojt_admin_token")?.value;
-    if (adminToken !== "authorized_guru_admin_session") {
+    if (!readAdminToken(request.cookies.get(ADMIN_COOKIE)?.value)) {
       return NextResponse.json(
         { error: "Unauthorized: Administrator credentials required." },
         { status: 401 }

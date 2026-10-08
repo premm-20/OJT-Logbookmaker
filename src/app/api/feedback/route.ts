@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { getSession, unauthorized } from "@/lib/auth/session";
 
-export async function GET(request: Request) {
+// Feedback rows always belong to the signed-in student (from the session cookie).
+
+export async function GET() {
   try {
-    const { searchParams } = new URL(request.url);
-    const userId = searchParams.get("userId") || "";
-
-    if (!userId) {
-      return NextResponse.json({ feedbacks: [] });
-    }
+    const session = await getSession();
+    if (!session) return unauthorized();
+    const userId = session.id;
 
     const sql = getDb();
     const rows = await sql`
@@ -27,10 +27,13 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const session = await getSession();
+    if (!session) return unauthorized();
+    const user_id = session.id;
+
     const body = await request.json();
     const {
       id,
-      user_id,
       from_date,
       to_date,
       student_name,
@@ -50,10 +53,6 @@ export async function POST(request: Request) {
       designation,
       signature_date,
     } = body;
-
-    if (!user_id) {
-      return NextResponse.json({ error: "user_id is required" }, { status: 400 });
-    }
 
     const feedbackId = id || `fb_${user_id}_${Date.now()}`;
     const sql = getDb();
@@ -84,6 +83,9 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
+    const session = await getSession();
+    if (!session) return unauthorized();
+
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id") || "";
 
@@ -92,7 +94,7 @@ export async function DELETE(request: Request) {
     }
 
     const sql = getDb();
-    await sql`DELETE FROM supervisor_feedback WHERE id = ${id};`;
+    await sql`DELETE FROM supervisor_feedback WHERE id = ${id} AND user_id = ${session.id};`;
 
     return NextResponse.json({ success: true });
   } catch (err: unknown) {

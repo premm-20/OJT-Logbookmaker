@@ -1185,7 +1185,7 @@ export default function NewEntryPage() {
                 type="button"
                 onClick={handleGenerateFromPRD}
                 disabled={prdGenerating || !prdFile}
-                className="px-6 py-3 rounded-xl bg-gradient-to-r from-violet-600 to-primary-600 text-white font-bold text-sm hover:from-violet-700 hover:to-primary-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg shadow-violet-600/20 cursor-pointer transition-all"
+                className="px-6 py-3 rounded-xl bg-primary-700 text-white font-bold text-sm hover:bg-primary-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-sm cursor-pointer transition-all"
               >
                 {prdGenerating ? (
                   <>

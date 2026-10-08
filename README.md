@@ -16,17 +16,18 @@ AI-powered form filling for your OJT (On-the-Job Training) logbook. Paste your d
 - **Student Profile** — One-time setup for the logbook cover page
 - **Supervisor Feedback** — Monthly performance assessments with 10 rating criteria
 - **Dashboard** — Calendar view with CRUD operations (View, Edit, Delete, Duplicate)
-- **Authentication** — Official University Email OTP / Magic Link with Neon DB session tracking
+- **Accounts** — Sign up and sign in with a university email + password (email verified by a 6-digit code), or with the university Google account. Password reset by email code.
 
 ## Tech Stack
 
 | Layer        | Technology                              |
 | ------------ | --------------------------------------- |
-| Framework    | Next.js 15 (App Router)                 |
+| Framework    | Next.js 16 (App Router, `proxy.ts`)     |
 | Language     | TypeScript                              |
 | Styling      | Tailwind CSS v4                         |
 | Icons        | Lucide React                            |
 | Database     | Neon Serverless PostgreSQL              |
+| Auth         | Signed HttpOnly session cookie, scrypt passwords, Google Identity Services |
 | Email        | Nodemailer (Gmail SMTP)                 |
 | AI           | Google Gemini 2.0 Flash                 |
 | PDF          | jsPDF (client-side, programmatic)       |
@@ -51,16 +52,47 @@ cp .env.example .env.local
 Fill in your values:
 
 ```env
+AUTH_SECRET=long_random_string          # openssl rand -base64 48
+NEXT_PUBLIC_GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com
+ADMIN_USERNAME=your_admin_id
+ADMIN_PASSWORD=long_unique_password
 DATABASE_URL=postgresql://user:password@ep-xyz.neon.tech/neondb?sslmode=require
 GEMINI_API_KEY=your_gemini_api_key
 SMTP_USER=ojtlogbookmaker@gmail.com
 SMTP_PASS=your_16_character_app_password
 ```
 
+`AUTH_SECRET` is required in production. It signs the session cookie and the email
+verification codes; changing it signs everyone out.
+
+`ADMIN_USERNAME` and `ADMIN_PASSWORD` are the credentials for the admin portal at `/admin`.
+If either is unset, admin login is disabled. Admin sessions are signed with `AUTH_SECRET`
+and expire after 8 hours; login is limited to 5 attempts per IP per 15 minutes.
+
+`DATABASE_URL` is required: there is no built-in fallback database.
+
+### Google sign-in
+
+1. In [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials), open (or create) an OAuth client of type **Web application**.
+2. Under **Authorized JavaScript origins**, add every origin you serve from, e.g. `http://localhost:3000` and your production URL. No redirect URI is needed (popup flow).
+3. Put the client ID in `NEXT_PUBLIC_GOOGLE_CLIENT_ID`.
+
+Only `@medhaviskillsuniversity.edu.in` Google accounts are accepted. The first time a student
+continues with Google they are asked for their mobile number, then the account is created.
+
+### Email codes in development
+
+Without SMTP (or `RESEND_API_KEY`) configured, `next dev` prints sign-up and reset codes in the
+terminal and shows them on the page. In production, email delivery is required.
+
 ### 3. Neon Database Setup
 
 1. Create a serverless PostgreSQL database at [neon.tech](https://neon.tech)
 2. Copy your connection string into `DATABASE_URL` in `.env.local` or Railway / Vercel environment settings.
+
+The `app_users` table (accounts) is created automatically on first use, and missing
+`user_profiles` columns are added automatically. Account IDs are `usr_<mobile>`, so students who
+used the earlier portal keep their existing entries when they sign up with the same number.
 
 ```sql
 -- ============================================================
@@ -222,10 +254,12 @@ src/
 │   ├── page.tsx                          # Landing page
 │   ├── layout.tsx                        # Root layout
 │   ├── globals.css                       # Design system
-│   ├── (auth)/                           # Auth pages
+│   ├── (auth)/                           # Split-screen auth pages
 │   │   ├── login/page.tsx
-│   │   └── signup/page.tsx
-│   ├── auth/callback/route.ts            # OAuth callback
+│   │   ├── signup/page.tsx               # details → email code
+│   │   └── forgot-password/page.tsx
+│   ├── api/auth/                         # signin, signup, reset, otp/send,
+│   │                                     # google, google/complete, session, logout
 │   ├── api/extract-logbook/route.ts      # AI extraction API
 │   └── dashboard/
 │       ├── page.tsx                      # Entry list
@@ -242,13 +276,14 @@ src/
 │   ├── logbook-preview.tsx              # A4 preview component
 │   └── entry-card.tsx                   # Dashboard entry card
 ├── lib/
+│   ├── auth/                            # sessions, passwords, users, Google, rate limits
 │   ├── db.ts                            # Neon Serverless PostgreSQL connection
 │   ├── login-tracker.ts                 # Audit logging & database session tracking
 │   ├── pdf-generator.ts                 # jsPDF document generation
 │   ├── types.ts                         # TypeScript interfaces
 │   ├── validation.ts                    # Text verification logic
 │   └── utils.ts                         # Date/time utilities
-└── middleware.ts                         # Auth session middleware
+└── proxy.ts                              # Verifies the session for /dashboard and /api
 ```
 
 ## Deployment

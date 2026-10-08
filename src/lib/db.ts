@@ -5,9 +5,12 @@ import { neon } from "@neondatabase/serverless";
  * Works across Vercel, Railway, and local development.
  */
 export function getDb() {
-  const connectionString =
-    process.env.DATABASE_URL ||
-    "postgresql://neondb_owner:npg_Z3qxVFv5lrai@ep-long-feather-b59jje5f-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require";
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error(
+      "DATABASE_URL is not set. Add your Neon connection string to .env.local (or your hosting provider's environment settings)."
+    );
+  }
 
   return neon(connectionString);
 }

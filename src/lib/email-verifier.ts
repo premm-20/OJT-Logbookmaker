@@ -1,7 +1,5 @@
 import dns from "dns";
-
-const UNIVERSITY_EMAIL_REGEX =
-  /^[a-zA-Z0-9._%+-]+@medhaviskills(?:\.university|university)\.edu\.in$/i;
+import { UNIVERSITY_EMAIL_REGEX } from "@/lib/auth/config";
 
 /**
  * Validates syntax and verifies active Google Workspace MX mail exchange servers
@@ -48,7 +46,7 @@ export async function verifyUniversityEmail(email: string): Promise<{
       valid: true,
       isGoogleWorkspace: isGoogle,
     };
-  } catch (err) {
+  } catch {
     // If DNS check fails due to local network restriction, allow valid format
     return {
       valid: true,

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { ADMIN_COOKIE } from "@/lib/auth/admin";
 
 export async function POST() {
   const response = NextResponse.json({
@@ -6,7 +7,7 @@ export async function POST() {
     message: "Admin logged out",
   });
 
-  response.cookies.set("ojt_admin_token", "", {
+  response.cookies.set(ADMIN_COOKIE, "", {
     path: "/",
     httpOnly: true,
     maxAge: 0,

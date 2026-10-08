@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  BookOpen,
   PlusCircle,
   LayoutDashboard,
   User,
@@ -14,19 +13,20 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSidebar } from "@/context/sidebar-context";
+import BrandMark from "@/components/brand-mark";
+import UserAvatar from "@/components/user-avatar";
+import type { ClientUser } from "@/lib/auth/client-identity";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/dashboard/new-entry", label: "New Entry", icon: PlusCircle },
+  { href: "/dashboard/new-entry", label: "New entry", icon: PlusCircle },
   { href: "/dashboard/profile", label: "Profile", icon: User },
   { href: "/dashboard/edit-pdf", label: "Edit PDF", icon: FileEdit },
-  { href: "/dashboard/feedback", label: "Supervisor Feedback", icon: MessageSquare },
-  { href: "/dashboard/logbook", label: "Complete Logbook", icon: FileText },
+  { href: "/dashboard/feedback", label: "Supervisor feedback", icon: MessageSquare },
+  { href: "/dashboard/logbook", label: "Complete logbook", icon: FileText },
 ];
 
-
-
-export default function Sidebar() {
+export default function Sidebar({ user }: { user: ClientUser }) {
   const pathname = usePathname();
   const { open, close } = useSidebar();
 
@@ -37,7 +37,7 @@ export default function Sidebar() {
         onClick={close}
         aria-hidden="true"
         className={cn(
-          "fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px] transition-opacity duration-300",
+          "fixed inset-0 z-40 bg-surface-950/40 backdrop-blur-[2px] transition-opacity duration-300",
           open ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         )}
       />
@@ -51,14 +51,8 @@ export default function Sidebar() {
       >
         {/* Header */}
         <div className="p-4 border-b border-surface-200 flex items-center justify-between shrink-0">
-          <Link href="/dashboard" onClick={close} className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shadow-md shrink-0">
-              <BookOpen className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h1 className="text-sm font-bold text-surface-900 leading-tight">OJT Logbook</h1>
-              <p className="text-[11px] text-surface-800/50">Maker</p>
-            </div>
+          <Link href="/dashboard" onClick={close} className="rounded-xl">
+            <BrandMark />
           </Link>
 
           {/* Close (X) button */}
@@ -102,10 +96,18 @@ export default function Sidebar() {
           })}
         </nav>
 
-        {/* Footer */}
-        <div className="p-4 border-t border-surface-200 bg-surface-50/60 shrink-0">
-          <p className="text-[11px] text-surface-400 text-center">OJT Logbook Maker · v1.0</p>
-        </div>
+        {/* Footer: signed-in student */}
+        <Link
+          href="/dashboard/profile"
+          onClick={close}
+          className="m-3 flex items-center gap-3 rounded-xl bg-surface-100 p-3 shrink-0 hover:bg-surface-200"
+        >
+          <UserAvatar user={user} size={36} />
+          <span className="min-w-0 leading-tight">
+            <span className="block truncate text-sm font-semibold text-surface-900">{user.name}</span>
+            <span className="block truncate text-xs text-surface-600">{user.email}</span>
+          </span>
+        </Link>
       </aside>
     </>
   );

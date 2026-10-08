@@ -1,14 +1,10 @@
 import DashboardShell from "@/components/dashboard-shell";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { getSession } from "@/lib/auth/session";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const cookieStore = await cookies();
-  const ojtSession = cookieStore.get("ojt_session")?.value;
+  const user = await getSession();
+  if (!user) redirect("/login");
 
-  if (!ojtSession) {
-    redirect("/login");
-  }
-
-  return <DashboardShell>{children}</DashboardShell>;
+  return <DashboardShell user={user}>{children}</DashboardShell>;
 }

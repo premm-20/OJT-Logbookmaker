@@ -1,27 +1,52 @@
 import { NextResponse } from "next/server";
+import {
+  ADMIN_COOKIE,
+  ADMIN_MAX_AGE_SECONDS,
+  checkAdminCredentials,
+  createAdminToken,
+  getAdminCredentials,
+} from "@/lib/auth/admin";
+import { rateLimit, resetRateLimit, tooManyAttemptsMessage } from "@/lib/auth/rate-limit";
+import { clientIp } from "@/lib/auth/session";
+
+const WINDOW_MS = 15 * 60 * 1000;
 
 export async function POST(request: Request) {
   try {
+    const credentials = getAdminCredentials();
+    if (!credentials) {
+      return NextResponse.json(
+        { error: "Admin login is not configured on this server." },
+        { status: 503 }
+      );
+    }
+
+    const ipKey = `admin-login-ip:${clientIp(request)}`;
+    const limit = rateLimit(ipKey, 5, WINDOW_MS);
+    if (!limit.ok) {
+      return NextResponse.json(
+        { error: tooManyAttemptsMessage(limit.retryAfterSeconds) },
+        { status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) } }
+      );
+    }
+
     const body = await request.json();
-    const { username, password } = body;
+    const username = typeof body?.username === "string" ? body.username.trim() : "";
+    const password = typeof body?.password === "string" ? body.password : "";
 
-    const cleanUser = (username || "").trim();
-    const cleanPass = (password || "").trim();
-
-    // Check credentials strictly
-    if (cleanUser === "Guru" && cleanPass === "Prem@guru99") {
+    if (checkAdminCredentials(credentials, username, password)) {
+      resetRateLimit(ipKey);
       const response = NextResponse.json({
         success: true,
         message: "Admin authenticated successfully",
       });
 
-      // Set secure admin session cookie
-      response.cookies.set("ojt_admin_token", "authorized_guru_admin_session", {
+      response.cookies.set(ADMIN_COOKIE, createAdminToken(credentials.username), {
         path: "/",
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax",
-        maxAge: 60 * 60 * 24 * 7, // 7 days
+        maxAge: ADMIN_MAX_AGE_SECONDS,
       });
 
       return response;

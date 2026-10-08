@@ -61,6 +61,7 @@ function parseUserAgent(ua: string): { device: string; browser: string } {
 }
 
 export async function recordUserLogin(params: {
+  userId?: string;
   name: string;
   email: string;
   mobile: string;
@@ -68,7 +69,7 @@ export async function recordUserLogin(params: {
   userAgent?: string;
 }): Promise<LoginSession> {
   const cleanMobile = (params.mobile || "").replace(/\D/g, "");
-  const userId = `usr_${cleanMobile || Date.now()}`;
+  const userId = params.userId || `usr_${cleanMobile || Date.now()}`;
   const ua = params.userAgent || "";
   const { device, browser } = parseUserAgent(ua);
   const now = new Date().toISOString();

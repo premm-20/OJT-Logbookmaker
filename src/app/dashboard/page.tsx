@@ -5,13 +5,7 @@ import { useRouter } from "next/navigation";
 import type { DailyEntry } from "@/lib/types";
 import { getMonthYear } from "@/lib/utils";
 import EntryCard from "@/components/entry-card";
-import {
-  PlusCircle,
-  Loader2,
-  BookOpen,
-  Calendar,
-  FileText,
-} from "lucide-react";
+import { PlusCircle, NotebookPen, Calendar, FileText, ArrowRight } from "lucide-react";
 import Link from "next/link";
 
 export default function DashboardPage() {
@@ -81,16 +75,10 @@ export default function DashboardPage() {
       localStorage.setItem("ojt_saved_entries", JSON.stringify(updated));
     } catch {}
 
-    // Sync updated list to Neon PostgreSQL
-    if (currentUserId) {
-      try {
-        await fetch("/api/entries", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId: currentUserId, entries: updated }),
-        });
-      } catch {}
-    }
+    // Remove it from the database too, otherwise it reappears on reload.
+    try {
+      await fetch(`/api/entries?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    } catch {}
   }
 
   function handleDuplicate(entry: DailyEntry) {
@@ -120,81 +108,91 @@ export default function DashboardPage() {
   return (
     <div className="max-w-4xl mx-auto space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-surface-900">
-            {userName ? `Welcome, ${userName}` : "Student Dashboard"}
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="text-[28px] font-semibold tracking-tight text-surface-950">
+            {userName ? `Hi, ${userName.split(" ")[0]}` : "Your logbook"}
           </h1>
-          <p className="text-sm text-surface-600 mt-1 flex flex-wrap items-center gap-2">
-            <span>{entries.length} {entries.length === 1 ? "entry" : "entries"} recorded</span>
-            {userEmail && (
+          <p className="mt-1 text-sm text-surface-600">
+            {loading ? (
+              "Loading your entries"
+            ) : (
               <>
-                <span>•</span>
-                <span className="font-mono text-xs text-primary-700 bg-primary-50 px-2 py-0.5 rounded-md border border-primary-100">
-                  {userEmail}
-                </span>
+                <span className="font-mono tabular-nums text-surface-900">{entries.length}</span>{" "}
+                {entries.length === 1 ? "day" : "days"} logged
+                {userEmail && <span className="hidden sm:inline"> as {userEmail}</span>}
               </>
             )}
           </p>
         </div>
         <Link
           href="/dashboard/new-entry"
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 text-white text-sm font-medium hover:from-primary-600 hover:to-primary-700 shadow-lg shadow-primary-500/20"
+          className="flex h-11 items-center gap-2 rounded-xl bg-primary-700 px-4 text-sm font-semibold text-white shadow-[0_1px_2px_oklch(0.3_0.058_236/0.35),inset_0_1px_0_oklch(1_0_0/0.12)] hover:bg-primary-800"
         >
-          <PlusCircle className="w-4 h-4" />
-          New Entry
+          <PlusCircle className="h-4 w-4" />
+          New entry
         </Link>
       </div>
 
 
       {/* Saved Logbook Banner for Returning Users */}
       {!loading && entries.length > 0 && (
-        <div className="bg-gradient-to-r from-primary-900 to-surface-900 text-white rounded-2xl p-6 shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary-500/30 text-primary-200 border border-primary-400/20">
-              Official Logbook Saved & Active
-            </span>
-            <h2 className="text-lg font-bold">Your Saved 90-Page OJT Logbook</h2>
-            <p className="text-xs text-surface-300">
-              {entries.length} day{entries.length > 1 ? "s" : ""} recorded • Stamped directly onto your official template
+        <div className="grain relative overflow-hidden rounded-2xl bg-primary-950 p-6 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="absolute inset-0 bg-[radial-gradient(70%_120%_at_100%_0%,oklch(0.42_0.09_236)_0%,transparent_70%)]" aria-hidden />
+          <div className="relative space-y-1">
+            <h2 className="text-lg font-semibold tracking-tight">Your logbook is ready to export</h2>
+            <p className="text-sm text-primary-100/75">
+              {entries.length} {entries.length === 1 ? "day is" : "days are"} printed onto the official university template.
             </p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <Link
-              href="/dashboard/logbook"
-              className="px-4 py-2.5 rounded-xl bg-white text-surface-900 text-sm font-semibold hover:bg-surface-100 transition-colors flex items-center gap-2 shadow-sm"
-            >
-              <FileText className="w-4 h-4 text-primary-600" />
-              Preview & Download 90-Page PDF
-            </Link>
-          </div>
+          <Link
+            href="/dashboard/logbook"
+            className="relative flex h-11 shrink-0 items-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-primary-900 hover:bg-primary-50"
+          >
+            <FileText className="h-4 w-4" />
+            Preview and download PDF
+            <ArrowRight className="h-4 w-4" />
+          </Link>
         </div>
       )}
 
       {/* Loading */}
       {loading && (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-6 h-6 text-primary-500 animate-spin" />
+        <div className="space-y-3" aria-busy="true" aria-label="Loading entries">
+          <div className="skeleton h-24 w-full rounded-2xl" />
+          <div className="skeleton mt-6 h-4 w-32" />
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="skeleton h-20 w-full rounded-2xl" />
+          ))}
         </div>
       )}
 
       {/* Empty state */}
       {!loading && entries.length === 0 && (
-        <div className="text-center py-20">
-          <div className="w-20 h-20 rounded-2xl bg-primary-50 flex items-center justify-center mx-auto mb-4">
-            <BookOpen className="w-10 h-10 text-primary-300" />
+        <div className="rounded-2xl border border-dashed border-surface-300 bg-white px-6 py-14 text-center">
+          <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-50 text-primary-700">
+            <NotebookPen className="h-7 w-7" />
           </div>
-          <h2 className="text-lg font-semibold text-surface-900 mb-2">No entries yet</h2>
-          <p className="text-sm text-surface-800/50 mb-6">
-            Start by creating your first daily OJT logbook entry.
+          <h2 className="text-lg font-semibold text-surface-950">Log your first day</h2>
+          <p className="mx-auto mt-2 max-w-[44ch] text-sm leading-relaxed text-surface-600">
+            Paste what you did today, the way you&apos;d tell a friend. It gets sorted into tasks, learnings,
+            tools and achievements.
           </p>
-          <Link
-            href="/dashboard/new-entry"
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-medium hover:bg-primary-600"
-          >
-            <PlusCircle className="w-4 h-4" />
-            Create First Entry
-          </Link>
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+            <Link
+              href="/dashboard/new-entry"
+              className="inline-flex h-11 items-center gap-2 rounded-xl bg-primary-700 px-5 text-sm font-semibold text-white hover:bg-primary-800"
+            >
+              <PlusCircle className="h-4 w-4" />
+              Write today&apos;s entry
+            </Link>
+            <Link
+              href="/dashboard/profile"
+              className="inline-flex h-11 items-center rounded-xl px-4 text-sm font-semibold text-primary-700 hover:bg-primary-50"
+            >
+              Fill in your profile first
+            </Link>
+          </div>
         </div>
       )}
 
@@ -203,12 +201,10 @@ export default function DashboardPage() {
         Object.entries(grouped).map(([month, monthEntries]) => (
           <div key={month}>
             <div className="flex items-center gap-2 mb-3">
-              <Calendar className="w-4 h-4 text-primary-500" />
-              <h2 className="text-sm font-semibold text-surface-800 uppercase tracking-wider">
-                {month}
-              </h2>
-              <span className="text-xs text-surface-800/40">
-                ({monthEntries.length} {monthEntries.length === 1 ? "entry" : "entries"})
+              <Calendar className="w-4 h-4 text-primary-600" />
+              <h2 className="text-sm font-semibold text-surface-900">{month}</h2>
+              <span className="font-mono text-xs tabular-nums text-surface-600">
+                {monthEntries.length} {monthEntries.length === 1 ? "entry" : "entries"}
               </span>
             </div>
             <div className="space-y-3">

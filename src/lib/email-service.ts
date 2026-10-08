@@ -1,10 +1,12 @@
 import nodemailer from "nodemailer";
+import type SMTPTransport from "nodemailer/lib/smtp-transport";
+import type { OtpPurpose } from "@/lib/otp-store";
 
 export interface SendEmailParams {
   to: string;
   name: string;
   otp: string;
-  magicLinkUrl: string;
+  purpose: OtpPurpose;
 }
 
 export interface SendEmailResult {
@@ -14,87 +16,75 @@ export interface SendEmailResult {
   configured: boolean;
 }
 
-export async function sendVerificationEmail(
-  params: SendEmailParams
-): Promise<SendEmailResult> {
-  const { to, name, otp, magicLinkUrl } = params;
+const COPY: Record<OtpPurpose, { subject: string; intro: string }> = {
+  signup: {
+    subject: "Your OJT Logbook verification code",
+    intro: "Enter this code on the sign up page to confirm your university email and finish creating your account.",
+  },
+  reset: {
+    subject: "Your OJT Logbook password reset code",
+    intro: "Enter this code on the reset page to choose a new password. If you didn't ask for this, you can ignore this email.",
+  },
+};
 
-  // 1. Check for custom SMTP configuration (Gmail SMTP, Brevo, SendGrid, Zoho, etc.)
-  const smtpHost = process.env.SMTP_HOST || (process.env.SMTP_USER?.endsWith("@gmail.com") ? "smtp.gmail.com" : "");
-  const smtpPort = parseInt(process.env.SMTP_PORT || "587", 10);
-  const smtpUser = process.env.SMTP_USER;
-  const smtpPass = process.env.SMTP_PASS;
-  const smtpFrom =
-    process.env.SMTP_FROM ||
-    (smtpUser ? `"Medhavi Skills University OJT" <${smtpUser}>` : '"Medhavi Skills University OJT" <noreply@medhaviskillsuniversity.edu.in>');
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
 
-  const htmlContent = `
-<!DOCTYPE html>
+function renderHtml({ name, otp, purpose }: SendEmailParams): string {
+  const { intro } = COPY[purpose];
+  return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Medhavi Skills University - OJT Verification</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 24px; color: #1e293b; }
-    .container { max-width: 540px; margin: 0 auto; background: #ffffff; border-radius: 20px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); }
-    .header { background: linear-gradient(135deg, #1d4ed8 0%, #3b82f6 100%); padding: 32px 24px; text-align: center; color: #ffffff; }
-    .header h1 { margin: 0 0 6px 0; font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
-    .header p { margin: 0; font-size: 13px; opacity: 0.9; font-weight: 500; }
-    .content { padding: 32px 28px; }
-    .greeting { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
-    .text { font-size: 14px; line-height: 1.6; color: #475569; margin-bottom: 24px; }
-    .otp-box { background: #f1f5f9; border: 2px dashed #93c5fd; border-radius: 16px; padding: 20px; text-align: center; margin: 24px 0; }
-    .otp-label { font-size: 11px; font-weight: 800; color: #2563eb; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 8px; }
-    .otp-code { font-family: monospace; font-size: 36px; font-weight: 900; letter-spacing: 0.25em; color: #0f172a; margin: 0; }
-    .btn-container { text-align: center; margin: 28px 0; }
-    .btn { display: inline-block; background: #2563eb; color: #ffffff !important; text-decoration: none; padding: 14px 28px; border-radius: 12px; font-weight: 700; font-size: 14px; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25); }
-    .divider { height: 1px; background: #e2e8f0; margin: 28px 0; }
-    .footer { font-size: 12px; color: #94a3b8; line-height: 1.5; text-align: center; }
-  </style>
+  <title>OJT Logbook</title>
 </head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>Medhavi Skills University</h1>
-      <p>Official On-the-Job Training (OJT) Logbook Portal</p>
-    </div>
-    <div class="content">
-      <div class="greeting">Dear ${name || "Student"},</div>
-      <p class="text">
-        Use the 6-digit verification code below to verify your university Gmail account and access your official OJT Logbook workspace.
-      </p>
-
-      <div class="otp-box">
-        <div class="otp-label">Your 6-Digit Verification Code</div>
-        <div class="otp-code">${otp}</div>
-      </div>
-
-      <div class="btn-container">
-        <a href="${magicLinkUrl}" class="btn" target="_blank">
-          Direct One-Click Login &rarr;
-        </a>
-      </div>
-
-      <p class="text" style="font-size: 12px; text-align: center; color: #64748b;">
-        Or copy-paste this direct verification link in your browser:<br>
-        <a href="${magicLinkUrl}" style="color: #2563eb; word-break: break-all;">${magicLinkUrl}</a>
-      </p>
-
-      <div class="divider"></div>
-
-      <div class="footer">
-        <p>This code and login link will expire in <strong>15 minutes</strong>.</p>
-        <p>If you did not request this verification, please contact your university program coordinator immediately.</p>
-        <p>&copy; ${new Date().getFullYear()} Medhavi Skills University. All rights reserved.</p>
-      </div>
-    </div>
-  </div>
+<body style="margin:0;padding:32px 16px;background:#f3f6f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#17232c;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:14px;border:1px solid #dde5ea;">
+    <tr>
+      <td style="padding:28px 32px 0;">
+        <div style="font-size:13px;font-weight:700;color:#0a6e99;">OJT Logbook</div>
+        <div style="font-size:12px;color:#5b6b76;margin-top:2px;">Medhavi Skills University</div>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:24px 32px 8px;">
+        <p style="margin:0 0 12px;font-size:15px;font-weight:600;">Hi ${escapeHtml(name || "there")},</p>
+        <p style="margin:0;font-size:14px;line-height:1.6;color:#45545e;">${intro}</p>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:20px 32px;">
+        <div style="background:#eef5f9;border-radius:10px;padding:20px;text-align:center;">
+          <div style="font-family:'SFMono-Regular',Consolas,monospace;font-size:34px;font-weight:700;letter-spacing:10px;color:#0b3d55;">${otp}</div>
+        </div>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:0 32px 28px;font-size:12px;line-height:1.6;color:#6c7a84;">
+        The code expires in 15 minutes. Never share it with anyone, including staff.
+      </td>
+    </tr>
+  </table>
 </body>
-</html>
-`;
+</html>`;
+}
 
-  // Method 1: SMTP via Nodemailer
+export async function sendVerificationEmail(params: SendEmailParams): Promise<SendEmailResult> {
+  const { to, name, otp, purpose } = params;
+  const { subject } = COPY[purpose];
+  const html = renderHtml(params);
+  const text = `Hi ${name || "there"},\n\n${COPY[purpose].intro}\n\nYour code: ${otp}\n\nThe code expires in 15 minutes.\n\nOJT Logbook, Medhavi Skills University`;
+
+  // Method 1: SMTP via Nodemailer (Gmail, Brevo, Zoho, SendGrid, ...)
+  const smtpHost =
+    process.env.SMTP_HOST || (process.env.SMTP_USER?.endsWith("@gmail.com") ? "smtp.gmail.com" : "");
+  const smtpPort = parseInt(process.env.SMTP_PORT || "587", 10);
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
+  const smtpFrom = process.env.SMTP_FROM || (smtpUser ? `"OJT Logbook" <${smtpUser}>` : "");
+
   if (smtpHost && smtpUser && smtpPass) {
     try {
       const transporter = nodemailer.createTransport({
@@ -102,36 +92,20 @@ export async function sendVerificationEmail(
         port: smtpPort || 587,
         secure: smtpPort === 465,
         family: 4, // Force IPv4 to prevent ENETUNREACH errors on networks without IPv6
-        auth: {
-          user: smtpUser,
-          pass: smtpPass,
-        },
+        auth: { user: smtpUser, pass: smtpPass },
         connectionTimeout: 8000,
         greetingTimeout: 8000,
         socketTimeout: 10000,
-      } as any);
+      } as SMTPTransport.Options);
 
-      await transporter.sendMail({
-        from: smtpFrom,
-        to,
-        subject: `[MSU] Your OJT Verification Code: ${otp}`,
-        text: `Dear ${name},\n\nYour Medhavi Skills University OJT verification code is: ${otp}\n\nOr click here to verify and log in directly: ${magicLinkUrl}\n\nThis code expires in 15 minutes.\n\nMedhavi Skills University`,
-        html: htmlContent,
-      });
-
-      return {
-        success: true,
-        deliveryMode: "smtp",
-        message: `Verification code successfully delivered to ${to} via SMTP.`,
-        configured: true,
-      };
+      await transporter.sendMail({ from: smtpFrom, to, subject, text, html });
+      return { success: true, deliveryMode: "smtp", message: `Code sent to ${to}.`, configured: true };
     } catch (smtpErr: unknown) {
       console.error("Nodemailer SMTP failed:", smtpErr);
-      const errMsg = smtpErr instanceof Error ? smtpErr.message : "SMTP delivery failure";
       return {
         success: false,
         deliveryMode: "smtp",
-        message: `Failed to deliver verification email: ${errMsg}`,
+        message: "We couldn't send the email right now. Please try again in a minute.",
         configured: true,
       };
     }
@@ -143,45 +117,40 @@ export async function sendVerificationEmail(
     try {
       const res = await fetch("https://api.resend.com/emails", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${resendApiKey}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${resendApiKey}` },
         body: JSON.stringify({
-          from: process.env.RESEND_FROM || "Medhavi Skills University <onboarding@resend.dev>",
+          from: process.env.RESEND_FROM || "OJT Logbook <onboarding@resend.dev>",
           to: [to],
-          subject: `[MSU] Your OJT Verification Code: ${otp}`,
-          html: htmlContent,
+          subject,
+          html,
+          text,
         }),
       });
-
       if (res.ok) {
-        return {
-          success: true,
-          deliveryMode: "resend",
-          message: `Verification email delivered to ${to} via Resend.`,
-          configured: true,
-        };
-      } else {
-        const errJson = await res.json();
-        console.warn("Resend API warning:", errJson);
+        return { success: true, deliveryMode: "resend", message: `Code sent to ${to}.`, configured: true };
       }
+      console.warn("Resend API warning:", await res.json().catch(() => null));
     } catch (resendErr) {
       console.error("Resend API error:", resendErr);
     }
   }
 
-  // Method 3: Development / Fallback
-  console.log(`\n======================================================`);
-  console.log(`[MSU EMAIL DISPATCH] To: ${to} (${name})`);
-  console.log(`[MSU EMAIL DISPATCH] 6-Digit OTP: ${otp}`);
-  console.log(`[MSU EMAIL DISPATCH] One-Click Magic Link: ${magicLinkUrl}`);
-  console.log(`======================================================\n`);
+  // Method 3: Local development without an email provider. The code is
+  // printed to the terminal and returned to the browser (dev only).
+  if (process.env.NODE_ENV !== "production") {
+    console.log(`\n[OJT email:${purpose}] To: ${to}  Code: ${otp}\n`);
+    return {
+      success: true,
+      deliveryMode: "console",
+      message: "Email isn't configured, so the code is shown here and in the server terminal.",
+      configured: false,
+    };
+  }
 
   return {
     success: false,
     deliveryMode: "console",
-    message: `SMTP not configured in .env.local yet.`,
+    message: "Email delivery isn't configured on the server. Please contact your coordinator.",
     configured: false,
   };
 }

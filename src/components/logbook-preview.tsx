@@ -652,7 +652,7 @@ export default function LogbookPreview({
             onClick={() => setActiveTab("profile")}
             className={`flex items-center gap-1.5 px-3 py-1 rounded-lg font-bold shrink-0 transition-all cursor-pointer ${
               activeTab === "profile"
-                ? "bg-indigo-600 text-white shadow-xs"
+                ? "bg-primary-700 text-white shadow-xs"
                 : "bg-white text-surface-700 hover:bg-surface-200 border border-surface-200"
             }`}
           >
