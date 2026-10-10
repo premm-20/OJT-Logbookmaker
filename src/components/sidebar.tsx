@@ -19,7 +19,7 @@ import type { ClientUser } from "@/lib/auth/client-identity";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/dashboard/new-entry", label: "New entry", icon: PlusCircle },
+  { href: "/dashboard/new-entry", label: "Fill logbook", icon: PlusCircle },
   { href: "/dashboard/profile", label: "Profile", icon: User },
   { href: "/dashboard/edit-pdf", label: "Edit PDF", icon: FileEdit },
   { href: "/dashboard/feedback", label: "Supervisor feedback", icon: MessageSquare },

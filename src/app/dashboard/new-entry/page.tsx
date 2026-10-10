@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { calculateHours, getTodayDate, ensureSpecialAchievements, formatDateDDMMYYYY, formatDateYYYYMMDD } from "@/lib/utils";
 import { validateExtraction } from "@/lib/validation";
@@ -9,6 +9,7 @@ import { extractTextFromFile } from "@/lib/file-extractor";
 import LogbookPreview from "@/components/logbook-preview";
 import TimePicker from "@/components/time-picker";
 import { generateSingleDayPDF, generateCompleteLogbookPDF } from "@/lib/pdf-generator";
+import { useEntryDraft, type GenerationJob, type JobOutcome } from "@/context/entry-draft-context";
 import {
   Sparkles,
   Loader2,
@@ -32,10 +33,72 @@ import {
   Upload,
   FileText,
   X,
+  RotateCcw,
 } from "lucide-react";
 
+/** Unsaved form state kept by EntryDraftProvider while the student visits other sections. */
+interface FillDraft {
+  extractedDays: ExtractedDayEntry[];
+  activeDayIndex: number;
+  dayNumber: number;
+  date: string;
+  startTime: string;
+  endTime: string;
+  department: string;
+  designation: string;
+  originalText: string;
+  manualMode: boolean;
+  mySpace: string;
+  tasksCarriedOut: string;
+  keyLearningObservations: string;
+  toolsTechnologyUsed: string;
+  specialAchievements: string;
+  warnings: string[];
+  showPreview: boolean;
+  filled: boolean;
+  inputTab: "paste" | "prd";
+  prdFile: File | null;
+  appliedJobId: number | null;
+  showLearnersDetails: boolean;
+}
+
+/** A duplicated dashboard entry (set by the Duplicate action) takes priority over the draft. */
+function readInitialDraft(saved: Record<string, unknown> | null): Partial<FillDraft> {
+  if (typeof window !== "undefined") {
+    try {
+      const raw = sessionStorage.getItem("duplicate_entry");
+      if (raw) {
+        sessionStorage.removeItem("duplicate_entry");
+        const d = JSON.parse(raw);
+        return {
+          department: d.department || "",
+          designation: d.designation || "",
+          originalText: d.original_text || "",
+          mySpace: d.my_space || "",
+          tasksCarriedOut: d.tasks_carried_out || "",
+          keyLearningObservations: d.key_learning_observations || "",
+          toolsTechnologyUsed: d.tools_technology_used || "",
+          specialAchievements: d.special_achievements || "",
+          inputTab: "paste",
+          filled: true,
+          showPreview: true,
+        };
+      }
+    } catch {}
+  }
+  return (saved as Partial<FillDraft> | null) ?? {};
+}
+
 export default function NewEntryPage() {
+  const { draftVersion } = useEntryDraft();
+  // Discarding the draft bumps the version, which remounts a fresh form.
+  return <FillLogbookForm key={draftVersion} />;
+}
+
+function FillLogbookForm() {
   const router = useRouter();
+  const { job, isRunning, startJob, markApplied, readDraft, writeDraft, discardDraft } = useEntryDraft();
+  const [initial] = useState(() => readInitialDraft(readDraft()));
 
   // Learner's Details (Page 3 of Logbook)
   const [profile, setProfile] = useState<ProfileFormData>({
@@ -53,49 +116,96 @@ export default function NewEntryPage() {
     phone_number: "",
     email_id: "",
   });
-  const [showLearnersDetails, setShowLearnersDetails] = useState(false);
+  const [showLearnersDetails, setShowLearnersDetails] = useState(initial.showLearnersDetails ?? false);
   const [savingLearnerDetails, setSavingLearnerDetails] = useState(false);
   const [learnerDetailsSaved, setLearnerDetailsSaved] = useState(false);
 
   // Multi-day state
-  const [extractedDays, setExtractedDays] = useState<ExtractedDayEntry[]>([]);
-  const [activeDayIndex, setActiveDayIndex] = useState<number>(0);
+  const [extractedDays, setExtractedDays] = useState<ExtractedDayEntry[]>(initial.extractedDays ?? []);
+  const [activeDayIndex, setActiveDayIndex] = useState<number>(initial.activeDayIndex ?? 0);
 
   // Active day basic info (Day Number is inferred from text or sequence)
-  const [dayNumber, setDayNumber] = useState(1);
-  const [date, setDate] = useState(getTodayDate());
-  const [startTime, setStartTime] = useState("09:00 AM");
-  const [endTime, setEndTime] = useState("05:00 PM");
-  const [department, setDepartment] = useState("");
-  const [designation, setDesignation] = useState("");
+  const [dayNumber, setDayNumber] = useState(initial.dayNumber ?? 1);
+  const [date, setDate] = useState(initial.date ?? getTodayDate());
+  const [startTime, setStartTime] = useState(initial.startTime ?? "09:00 AM");
+  const [endTime, setEndTime] = useState(initial.endTime ?? "05:00 PM");
+  const [department, setDepartment] = useState(initial.department ?? "");
+  const [designation, setDesignation] = useState(initial.designation ?? "");
 
   // Content
-  const [originalText, setOriginalText] = useState("");
-  const [manualMode, setManualMode] = useState(false);
+  const [originalText, setOriginalText] = useState(initial.originalText ?? "");
+  const [manualMode, setManualMode] = useState(initial.manualMode ?? false);
 
   // Detected fields for active day
-  const [mySpace, setMySpace] = useState("");
-  const [tasksCarriedOut, setTasksCarriedOut] = useState("");
-  const [keyLearningObservations, setKeyLearningObservations] = useState("");
-  const [toolsTechnologyUsed, setToolsTechnologyUsed] = useState("");
-  const [specialAchievements, setSpecialAchievements] = useState("");
+  const [mySpace, setMySpace] = useState(initial.mySpace ?? "");
+  const [tasksCarriedOut, setTasksCarriedOut] = useState(initial.tasksCarriedOut ?? "");
+  const [keyLearningObservations, setKeyLearningObservations] = useState(initial.keyLearningObservations ?? "");
+  const [toolsTechnologyUsed, setToolsTechnologyUsed] = useState(initial.toolsTechnologyUsed ?? "");
+  const [specialAchievements, setSpecialAchievements] = useState(initial.specialAchievements ?? "");
 
   // UI state
-  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [downloadingFullPdf, setDownloadingFullPdf] = useState(false);
-  const [status, setStatus] = useState<"idle" | "analyzing" | "success" | "warning" | "error">("idle");
-  const [statusMessage, setStatusMessage] = useState("");
-  const [warnings, setWarnings] = useState<string[]>([]);
-  const [showPreview, setShowPreview] = useState(false);
-  const [filled, setFilled] = useState(false);
+  const [warnings, setWarnings] = useState<string[]>(initial.warnings ?? []);
+  const [showPreview, setShowPreview] = useState(initial.showPreview ?? false);
+  const [filled, setFilled] = useState(initial.filled ?? false);
 
   // ── PRD Upload state (Default to PRD first) ──
-  const [inputTab, setInputTab] = useState<"paste" | "prd">("prd");
-  const [prdFile, setPrdFile] = useState<File | null>(null);
-  const [prdGenerating, setPrdGenerating] = useState(false);
-  const [prdStatus, setPrdStatus] = useState<"idle" | "reading" | "generating" | "success" | "error">("idle");
-  const [prdStatusMessage, setPrdStatusMessage] = useState("");
+  const [inputTab, setInputTab] = useState<"paste" | "prd">(initial.inputTab ?? "prd");
+  const [prdFile, setPrdFile] = useState<File | null>(initial.prdFile ?? null);
+
+  // Generation runs in EntryDraftProvider so it survives leaving this page.
+  // These values are derived from that background job.
+  const [prdLocalError, setPrdLocalError] = useState("");
+  const [pasteLocalError, setPasteLocalError] = useState("");
+  const fileJob = job?.kind === "file" ? job : null;
+  const pasteJob = job?.kind === "paste" ? job : null;
+  const prdGenerating = fileJob?.phase === "reading" || fileJob?.phase === "generating";
+  const prdStatus = prdLocalError ? "error" : (fileJob?.phase ?? "idle");
+  const prdStatusMessage = prdLocalError || fileJob?.message || "";
+  const loading = pasteJob?.phase === "reading" || pasteJob?.phase === "generating";
+  type PasteStatus = "idle" | "analyzing" | "success" | "warning" | "error";
+  const status = (
+    pasteLocalError
+      ? "error"
+      : !pasteJob
+        ? "idle"
+        : pasteJob.phase === "success"
+          ? "success"
+          : pasteJob.phase === "error"
+            ? "error"
+            : "analyzing"
+  ) as PasteStatus;
+  const statusMessage = pasteLocalError || pasteJob?.message || "";
+
+  // Load a finished job's result into the form (also after returning to this page).
+  const [appliedJobId, setAppliedJobId] = useState<number | null>(initial.appliedJobId ?? null);
+  if (job && job.phase === "success" && job.id !== appliedJobId) {
+    setAppliedJobId(job.id);
+    applyJobResult(job);
+  }
+  useEffect(() => {
+    if (job && !job.applied && (job.phase === "success" || job.phase === "error")) markApplied(job.id);
+  }, [job, markApplied]);
+
+  // Keep the unsaved draft so it is still here after visiting other sections.
+  const keepDraft = useRef(true);
+  useEffect(() => {
+    if (!keepDraft.current) return;
+    const draft: FillDraft = {
+      extractedDays, activeDayIndex, dayNumber, date, startTime, endTime, department, designation,
+      originalText, manualMode, mySpace, tasksCarriedOut, keyLearningObservations, toolsTechnologyUsed,
+      specialAchievements, warnings, showPreview, filled, inputTab, prdFile, appliedJobId, showLearnersDetails,
+    };
+    writeDraft(draft as unknown as Record<string, unknown>);
+  });
+
+  const hasDraft = filled || extractedDays.length > 0 || originalText.trim().length > 0 || prdFile !== null;
+  function handleStartOver() {
+    if (!window.confirm("Clear this unsaved draft and start over?")) return;
+    keepDraft.current = false;
+    discardDraft();
+  }
 
   const totalHours = calculateHours(startTime, endTime);
 
@@ -293,175 +403,141 @@ export default function NewEntryPage() {
   // GENERATE FROM PRD — AI generation for all working days
   // File text is extracted CLIENT-SIDE (browser), then sent as JSON.
   // =====================================================
-  async function handleGenerateFromPRD() {
+  function handleGenerateFromPRD() {
     if (!prdFile) {
-      setPrdStatus("error");
-      setPrdStatusMessage("Please select a PRD file to upload.");
+      setPrdLocalError("Please select a PRD file to upload.");
       return;
     }
+    const file = prdFile;
 
     // Derive dates from Learner's Details and Basic Information section below
-    const effStartDate = profile.ojt_start_date || date || getTodayDate();
-    const effEndDate = profile.ojt_end_date || date || getTodayDate();
+    const params = {
+      startDate: profile.ojt_start_date || date || getTodayDate(),
+      endDate: profile.ojt_end_date || date || getTodayDate(),
+      startTime: startTime || "09:00 AM",
+      endTime: endTime || "05:00 PM",
+      department: department || profile.department || "Software Development",
+      designation: designation || profile.designation || "Software Development Intern",
+    };
 
-    setPrdGenerating(true);
+    setPrdLocalError("");
     setWarnings([]);
 
-    try {
+    // Runs in EntryDraftProvider: must not touch this component's state.
+    const started = startJob("file", file.name, async (report): Promise<JobOutcome> => {
       // Step 1: Extract text from the file right here in the browser
-      setPrdStatus("reading");
-      setPrdStatusMessage(`Reading "${prdFile.name}"...`);
+      report("reading", `Reading "${file.name}"...`);
       let prdText: string;
       try {
-        prdText = await extractTextFromFile(prdFile);
+        prdText = await extractTextFromFile(file);
       } catch (extractErr: unknown) {
-        setPrdStatus("error");
-        setPrdStatusMessage(
-          extractErr instanceof Error
-            ? extractErr.message
-            : "Failed to read the file. Please try a different format."
-        );
-        return;
+        return {
+          ok: false,
+          error: extractErr instanceof Error ? extractErr.message : "Failed to read the file. Please try a different format.",
+        };
       }
-
-      if (!prdText.trim()) {
-        setPrdStatus("error");
-        setPrdStatusMessage("The file appears to be empty or could not be read.");
-        return;
-      }
+      if (!prdText.trim()) return { ok: false, error: "The file appears to be empty or could not be read." };
 
       // Step 2: Send plain JSON to the API (no file upload needed)
-      setPrdStatus("generating");
-      setPrdStatusMessage("AI is writing your logbook entries — this may take 20–40 seconds...");
-
+      report("generating", "Writing your logbook entries. This can take 20 to 40 seconds; you can open other sections meanwhile.");
       const res = await fetch("/api/generate-from-prd", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prdText,
-          startDate: effStartDate,
-          endDate: effEndDate,
-          startTime: startTime || "09:00 AM",
-          endTime: endTime || "05:00 PM",
-          department: department || profile.department || "Software Development",
-          designation: designation || profile.designation || "Software Development Intern",
-        }),
+        body: JSON.stringify({ prdText, ...params }),
       });
-
       const result = await res.json();
-
-      if (!result.success) {
-        setPrdStatus("error");
-        setPrdStatusMessage(result.error || "Failed to generate entries. Please try again.");
-        return;
+      if (!result.success) return { ok: false, error: result.error || "Failed to generate entries. Please try again." };
+      if (!result.days || result.days.length === 0) {
+        return { ok: false, error: "No entries were generated. Try a different date range." };
       }
 
-      if (result.days && result.days.length > 0) {
-        const sanitizedDays = result.days.map((d: ExtractedDayEntry) => {
-          const tasks = Array.isArray(d.tasksCarriedOutToday)
-            ? d.tasksCarriedOutToday.join("\n")
-            : String(d.tasksCarriedOutToday || "");
-          const rawAch = Array.isArray(d.specialAchievements)
-            ? d.specialAchievements.join("\n")
-            : String(d.specialAchievements || "");
-          const cleanAch = ensureSpecialAchievements(rawAch, tasks);
-          return {
-            ...d,
-            specialAchievements: [cleanAch],
-          };
-        });
+      const sanitizedDays = result.days.map((d: ExtractedDayEntry) => {
+        const tasks = Array.isArray(d.tasksCarriedOutToday)
+          ? d.tasksCarriedOutToday.join("\n")
+          : String(d.tasksCarriedOutToday || "");
+        const rawAch = Array.isArray(d.specialAchievements)
+          ? d.specialAchievements.join("\n")
+          : String(d.specialAchievements || "");
+        return { ...d, specialAchievements: [ensureSpecialAchievements(rawAch, tasks)] };
+      });
+      return {
+        ok: true,
+        payload: sanitizedDays,
+        dayCount: sanitizedDays.length,
+        message: `Generated ${sanitizedDays.length} working-day entries (Sundays skipped).`,
+      };
+    });
+    if (!started) setPrdLocalError("Another generation is still running. Wait for it to finish.");
+  }
 
-        setExtractedDays(sanitizedDays);
-        setActiveDayIndex(0);
-        loadDayIntoForm(sanitizedDays[0]);
-        setPrdStatus("success");
-        setPrdStatusMessage(
-          `🎉 Generated ${sanitizedDays.length} working-day entries (Sundays skipped)!`
-        );
-        setShowPreview(true);
-        setFilled(true);
-      } else {
-        setPrdStatus("error");
-        setPrdStatusMessage("No entries were generated. Try a different date range.");
-      }
-    } catch {
-      setPrdStatus("error");
-      setPrdStatusMessage("Network error. Please check your connection and try again.");
-    } finally {
-      setPrdGenerating(false);
+  /** Loads a finished background job's result into the form. */
+  function applyJobResult(done: GenerationJob) {
+    if (done.kind === "file") {
+      const days = done.payload as ExtractedDayEntry[];
+      setExtractedDays(days);
+      setActiveDayIndex(0);
+      loadDayIntoForm(days[0]);
+      setShowPreview(true);
+      setFilled(true);
+      return;
+    }
+
+    const result = done.payload as ExtractionResponse;
+    if (result.days && result.days.length >= 1) {
+      setExtractedDays(result.days);
+      setActiveDayIndex(0);
+      loadDayIntoForm(result.days[0]);
+    } else if (result.data) {
+      // Fallback for single data object
+      const extracted = result.data;
+      if (result.detectedDayNumber) setDayNumber(result.detectedDayNumber);
+      setMySpace(joinFragments(extracted.mySpace));
+      setTasksCarriedOut(joinFragments(extracted.tasksCarriedOutToday));
+      setKeyLearningObservations(joinFragments(extracted.keyLearningObservations));
+      setToolsTechnologyUsed(joinFragments(extracted.toolsTechnologyUsed));
+      setSpecialAchievements(joinFragments(extracted.specialAchievements));
+      setFilled(true);
+      setShowPreview(true);
+    }
+    if (result.validationWarnings && result.validationWarnings.length > 0) {
+      setWarnings(result.validationWarnings);
     }
   }
 
   // =====================================================
   // AUTO FILL LOGBOOK — AI extraction supporting Multi-Day
   // =====================================================
-  async function handleAutoFill() {
+  function handleAutoFill() {
     if (!originalText.trim()) {
-      setStatus("error");
-      setStatusMessage("Please paste your OJT content first.");
+      setPasteLocalError("Please paste your OJT content first.");
       return;
     }
-
-    setLoading(true);
-    setStatus("analyzing");
-    setStatusMessage("Analyzing and categorizing your OJT content...");
+    const text = originalText;
+    setPasteLocalError("");
     setWarnings([]);
 
-    try {
+    // Runs in EntryDraftProvider: must not touch this component's state.
+    const started = startJob("paste", "Your pasted notes", async (report): Promise<JobOutcome> => {
+      report("generating", "Analyzing and categorizing your OJT content...");
       const res = await fetch("/api/extract-logbook", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: originalText }),
+        body: JSON.stringify({ text }),
       });
-
       const result: ExtractionResponse = await res.json();
+      if (!result.success) return { ok: false, error: result.error || "Failed to analyze text. Please try again." };
 
-      if (!result.success) {
-        setStatus("error");
-        setStatusMessage(result.error || "Failed to analyze text. Please try again.");
-        setLoading(false);
-        return;
-      }
-
-      // Check if multi-day was detected
-      if (result.days && result.days.length > 1) {
-        setExtractedDays(result.days);
-        setActiveDayIndex(0);
-        loadDayIntoForm(result.days[0]);
-        setStatus("success");
-        setStatusMessage(`🎉 Detected and extracted ${result.days.length} days of OJT activities!`);
-      } else if (result.days && result.days.length === 1) {
-        setExtractedDays(result.days);
-        setActiveDayIndex(0);
-        loadDayIntoForm(result.days[0]);
-        setStatus("success");
-        setStatusMessage("Logbook fields filled successfully.");
-      } else if (result.data) {
-        // Fallback for single data object
-        const extracted = result.data;
-        if (result.detectedDayNumber) {
-          setDayNumber(result.detectedDayNumber);
-        }
-        setMySpace(joinFragments(extracted.mySpace));
-        setTasksCarriedOut(joinFragments(extracted.tasksCarriedOutToday));
-        setKeyLearningObservations(joinFragments(extracted.keyLearningObservations));
-        setToolsTechnologyUsed(joinFragments(extracted.toolsTechnologyUsed));
-        setSpecialAchievements(joinFragments(extracted.specialAchievements));
-        setFilled(true);
-        setShowPreview(true);
-        setStatus("success");
-        setStatusMessage("Logbook fields filled successfully.");
-      }
-
-      if (result.validationWarnings && result.validationWarnings.length > 0) {
-        setWarnings(result.validationWarnings);
-      }
-    } catch {
-      setStatus("error");
-      setStatusMessage("Network error. Please check your connection and try again.");
-    } finally {
-      setLoading(false);
-    }
+      const dayCount = result.days?.length || (result.data ? 1 : 0);
+      if (!dayCount) return { ok: false, error: "Nothing could be sorted from that text. Try adding more detail." };
+      return {
+        ok: true,
+        payload: result,
+        dayCount,
+        message:
+          dayCount > 1 ? `Detected and sorted ${dayCount} days of OJT activities.` : "Logbook fields filled successfully.",
+      };
+    });
+    if (!started) setPasteLocalError("Another generation is still running. Wait for it to finish.");
   }
 
   // =====================================================
@@ -544,6 +620,8 @@ export default function NewEntryPage() {
       console.warn("Entry save warning:", err);
     }
 
+    keepDraft.current = false;
+    discardDraft({ remount: false });
     router.push("/dashboard/logbook");
   }
 
@@ -625,6 +703,8 @@ export default function NewEntryPage() {
       console.warn("Neon bulk entries save warning:", err);
     }
 
+    keepDraft.current = false;
+    discardDraft({ remount: false });
     router.push("/dashboard/logbook");
   }
 
@@ -722,11 +802,22 @@ export default function NewEntryPage() {
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-surface-900">New Daily / Multi-Day Entry</h1>
-          <p className="text-sm text-surface-800/60 mt-1">
-            Paste your OJT content for a single day or <strong>multiple days at once</strong> — the system automatically maps each day into the official logbook.
+          <h1 className="text-2xl font-bold text-surface-900">Fill your logbook</h1>
+          <p className="text-sm text-surface-600 mt-1">
+            Upload a project document or paste your notes for one day or <strong>several days at once</strong>. Each day
+            is placed into the official logbook. Generation keeps running if you open other sections.
           </p>
         </div>
+        {hasDraft && !isRunning && (
+          <button
+            type="button"
+            onClick={handleStartOver}
+            className="flex h-10 shrink-0 cursor-pointer items-center gap-2 self-start rounded-xl px-3 text-sm font-semibold text-surface-600 hover:bg-surface-100 hover:text-surface-900 sm:self-auto"
+          >
+            <RotateCcw className="h-4 w-4" aria-hidden />
+            Start over
+          </button>
+        )}
       </div>
 
       {/* =========================================== */}
@@ -1041,8 +1132,7 @@ export default function NewEntryPage() {
                 onChange={(e) => {
                   const file = e.target.files?.[0] || null;
                   setPrdFile(file);
-                  setPrdStatus("idle");
-                  setPrdStatusMessage("");
+                  setPrdLocalError("");
                 }}
               />
               {prdFile ? (
@@ -1057,7 +1147,7 @@ export default function NewEntryPage() {
                     onClick={(e) => {
                       e.stopPropagation();
                       setPrdFile(null);
-                      setPrdStatus("idle");
+                      setPrdLocalError("");
                       const input = document.getElementById("prd-file-input") as HTMLInputElement;
                       if (input) input.value = "";
                     }}
@@ -1184,7 +1274,7 @@ export default function NewEntryPage() {
               <button
                 type="button"
                 onClick={handleGenerateFromPRD}
-                disabled={prdGenerating || !prdFile}
+                disabled={isRunning || !prdFile}
                 className="px-6 py-3 rounded-xl bg-primary-700 text-white font-bold text-sm hover:bg-primary-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-sm cursor-pointer transition-all"
               >
                 {prdGenerating ? (
@@ -1369,7 +1459,7 @@ export default function NewEntryPage() {
                 <div className="flex flex-wrap items-center gap-3 pt-1">
                   <button
                     onClick={handleAutoFill}
-                    disabled={loading || !originalText.trim()}
+                    disabled={isRunning || !originalText.trim()}
                     className="px-6 py-3 rounded-xl bg-gradient-to-r from-primary-600 to-primary-700 text-white font-bold text-sm hover:from-primary-700 hover:to-primary-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-lg shadow-primary-600/20 cursor-pointer transition-all"
                   >
                     {loading ? (

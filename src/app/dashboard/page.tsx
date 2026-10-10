@@ -130,7 +130,7 @@ export default function DashboardPage() {
           className="flex h-11 items-center gap-2 rounded-xl bg-primary-700 px-4 text-sm font-semibold text-white shadow-[0_1px_2px_oklch(0.3_0.058_236/0.35),inset_0_1px_0_oklch(1_0_0/0.12)] hover:bg-primary-800"
         >
           <PlusCircle className="h-4 w-4" />
-          New entry
+          Fill logbook
         </Link>
       </div>
 

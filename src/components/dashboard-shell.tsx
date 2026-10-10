@@ -4,6 +4,8 @@ import React, { useEffect } from "react";
 import Sidebar from "@/components/sidebar";
 import Navbar from "@/components/navbar";
 import { SidebarProvider, useSidebar } from "@/context/sidebar-context";
+import { EntryDraftProvider } from "@/context/entry-draft-context";
+import GenerationStatus from "@/components/generation-status";
 import { syncClientIdentity, type ClientUser } from "@/lib/auth/client-identity";
 
 function DashboardShellInner({ user, children }: { user: ClientUser; children: React.ReactNode }) {
@@ -33,6 +35,7 @@ function DashboardShellInner({ user, children }: { user: ClientUser; children: R
           {children}
         </main>
       </div>
+      <GenerationStatus />
     </div>
   );
 }
@@ -45,7 +48,9 @@ export default function DashboardShell({ user, children }: { user: ClientUser; c
 
   return (
     <SidebarProvider>
-      <DashboardShellInner user={user}>{children}</DashboardShellInner>
+      <EntryDraftProvider>
+        <DashboardShellInner user={user}>{children}</DashboardShellInner>
+      </EntryDraftProvider>
     </SidebarProvider>
   );
 }

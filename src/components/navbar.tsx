@@ -11,7 +11,7 @@ import { authClient } from "@/lib/auth/client";
 
 const PAGE_TITLES: Record<string, string> = {
   "/dashboard": "Dashboard",
-  "/dashboard/new-entry": "New entry",
+  "/dashboard/new-entry": "Fill logbook",
   "/dashboard/profile": "Profile",
   "/dashboard/edit-pdf": "Edit PDF",
   "/dashboard/feedback": "Supervisor feedback",
