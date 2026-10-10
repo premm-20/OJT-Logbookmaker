@@ -7,6 +7,7 @@ import { Loader2, LogOut, Menu } from "lucide-react";
 import BrandMark from "@/components/brand-mark";
 import UserAvatar from "@/components/user-avatar";
 import { clearClientIdentity, type ClientUser } from "@/lib/auth/client-identity";
+import { authClient } from "@/lib/auth/client";
 
 const PAGE_TITLES: Record<string, string> = {
   "/dashboard": "Dashboard",
@@ -35,7 +36,7 @@ export default function Navbar({ user, onMenuClick }: NavbarProps) {
   async function handleLogout() {
     setSigningOut(true);
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
+      await authClient.signOut();
     } catch {}
     clearClientIdentity();
     router.replace("/login");

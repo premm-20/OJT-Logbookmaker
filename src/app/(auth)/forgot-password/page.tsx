@@ -3,17 +3,16 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
+import { authClient } from "@/lib/auth/client";
 import { isUniversityEmail, normalizeEmail, PASSWORD_MIN_LENGTH } from "@/lib/auth/config";
 import { Field, FormAlert, OtpField, PasswordField, SubmitButton } from "@/components/auth/fields";
-import { finishAuth, postJson } from "@/components/auth/auth-client";
+import { goTo, neonCall, neonErrorMessage } from "@/components/auth/auth-client";
 
 export default function ForgotPasswordPage() {
   const [step, setStep] = useState<"email" | "reset">("email");
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
   const [password, setPassword] = useState("");
-  const [challengeToken, setChallengeToken] = useState("");
-  const [debugCode, setDebugCode] = useState("");
   const [fieldErrors, setFieldErrors] = useState<{ email?: string; otp?: string; password?: string }>({});
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -30,14 +29,12 @@ export default function ForgotPasswordPage() {
   async function sendCode() {
     setError("");
     setSubmitting(true);
-    const { ok, data } = await postJson("/api/auth/otp/send", { purpose: "reset", email: cleanEmail });
+    const { error: sendError } = await neonCall(() => authClient.forgetPassword.emailOtp({ email: cleanEmail }));
     setSubmitting(false);
-    if (!ok || !data.challengeToken) {
-      setError(data.error || "Couldn't send the code.");
+    if (sendError) {
+      setError(neonErrorMessage(sendError, "Couldn't send the code."));
       return false;
     }
-    setChallengeToken(data.challengeToken);
-    setDebugCode(data.debugCode || "");
     setCooldown(45);
     return true;
   }
@@ -63,14 +60,21 @@ export default function ForgotPasswordPage() {
 
     setError("");
     setSubmitting(true);
-    const { ok, data } = await postJson("/api/auth/reset", { email: cleanEmail, otp, password, challengeToken });
-    if (ok && data.user) {
-      finishAuth(data.user, "/dashboard");
+    const { error: resetError } = await neonCall(() => authClient.emailOtp.resetPassword({ email: cleanEmail, otp, password }));
+    if (resetError) {
+      setSubmitting(false);
+      const message = neonErrorMessage(resetError, "Couldn't reset your password.");
+      if (/code|otp|expired|too many/i.test(message)) setFieldErrors({ otp: message });
+      else setError(message);
       return;
     }
-    setSubmitting(false);
-    if (data.field === "otp" || data.field === "password") setFieldErrors({ [data.field]: data.error });
-    else setError(data.error || "Couldn't reset your password.");
+
+    const { error: signInError } = await neonCall(() => authClient.signIn.email({ email: cleanEmail, password }));
+    if (signInError) {
+      goTo("/login");
+      return;
+    }
+    goTo("/dashboard");
   }
 
   return (
@@ -118,17 +122,9 @@ export default function ForgotPasswordPage() {
             Choose a new password
           </h1>
           <p className="mt-2 text-[15px] leading-relaxed text-surface-600">
-            Enter the code we sent to <span className="break-all font-semibold text-surface-900">{cleanEmail}</span>.
+            If an account uses <span className="break-all font-semibold text-surface-900">{cleanEmail}</span>, a
+            6-digit code is on its way. Check spam if you don&apos;t see it.
           </p>
-
-          {debugCode && (
-            <div className="mt-6">
-              <FormAlert tone="info">
-                Email isn&apos;t set up on this server yet, so here&apos;s your code:{" "}
-                <span className="font-mono font-semibold tracking-wider">{debugCode}</span>
-              </FormAlert>
-            </div>
-          )}
 
           <form onSubmit={handleReset} noValidate className="mt-7 flex flex-col gap-5">
             <OtpField

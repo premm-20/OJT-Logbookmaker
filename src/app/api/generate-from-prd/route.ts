@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
+import { getSession, unauthorized } from "@/lib/auth/session";
 import type { ExtractedDayEntry } from "@/lib/types";
 
 // This route only does AI generation — file text is extracted client-side.
@@ -240,6 +241,9 @@ function parseAIResponse(cleaned: string): ExtractedDayEntry[] {
 // ─────────────────────────────────────────────────────────────
 export async function POST(req: Request) {
   try {
+    // Signed-in students only: these routes spend AI / PDF processing time.
+    if (!(await getSession())) return unauthorized();
+
     const body = await req.json();
     const {
       prdText,

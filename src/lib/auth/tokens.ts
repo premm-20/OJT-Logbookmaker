@@ -2,7 +2,7 @@ import crypto from "crypto";
 
 /**
  * HMAC-signed tokens: base64url(JSON payload) + "." + base64url(signature).
- * Used for the session cookie and short-lived Google sign-up tokens.
+ * Used for the admin session token.
  * Pure Node crypto, so it is safe to import from proxy.ts.
  */
 
@@ -58,45 +58,4 @@ export function verifyToken<T extends { typ: string; exp: number }>(
   } catch {
     return null;
   }
-}
-
-export interface SessionUser {
-  id: string;
-  name: string;
-  email: string;
-  mobile: string;
-  avatarUrl: string | null;
-}
-
-interface SessionPayload extends SessionUser {
-  typ: "session";
-  iat: number;
-  exp: number;
-}
-
-export function createSessionToken(user: SessionUser, maxAgeSeconds: number): string {
-  const now = Math.floor(Date.now() / 1000);
-  const payload: SessionPayload = {
-    typ: "session",
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    mobile: user.mobile,
-    avatarUrl: user.avatarUrl,
-    iat: now,
-    exp: now + maxAgeSeconds,
-  };
-  return signToken({ ...payload });
-}
-
-export function readSessionToken(token: string | undefined | null): SessionUser | null {
-  const payload = verifyToken<SessionPayload>(token, "session");
-  if (!payload) return null;
-  return {
-    id: payload.id,
-    name: payload.name,
-    email: payload.email,
-    mobile: payload.mobile,
-    avatarUrl: payload.avatarUrl ?? null,
-  };
 }

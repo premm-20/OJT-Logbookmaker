@@ -1,119 +1,62 @@
 "use client";
 
-import Script from "next/script";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Loader2 } from "lucide-react";
-import { GOOGLE_CLIENT_ID } from "@/lib/auth/config";
-import type { ClientUser } from "@/lib/auth/client-identity";
-import { postJson, type PendingGoogleSignup } from "./auth-client";
+import { authClient } from "@/lib/auth/client";
+import { absoluteUrl, neonCall, neonErrorMessage } from "./auth-client";
 
-interface GoogleIdApi {
-  initialize: (config: {
-    client_id: string;
-    callback: (response: { credential?: string }) => void;
-    auto_select?: boolean;
-    cancel_on_tap_outside?: boolean;
-    ux_mode?: "popup" | "redirect";
-    context?: "signin" | "signup" | "use";
-    hd?: string;
-  }) => void;
-  renderButton: (element: HTMLElement, options: Record<string, unknown>) => void;
-}
-
-declare global {
-  interface Window {
-    google?: { accounts?: { id?: GoogleIdApi } };
-  }
-}
-
-interface GoogleButtonProps {
-  mode: "signin" | "signup";
-  onSuccess: (user: ClientUser) => void;
-  onNeedsMobile: (pending: PendingGoogleSignup) => void;
-  onError: (message: string) => void;
+/** Google's four-colour "G" mark, as required by Google's sign-in branding guidelines. */
+function GoogleMark() {
+  return (
+    <svg className="h-[18px] w-[18px]" viewBox="0 0 48 48" aria-hidden>
+      <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z" />
+      <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
+      <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z" />
+      <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z" />
+    </svg>
+  );
 }
 
 /**
- * The official Google Identity Services button. Google returns a signed ID
- * token which the server verifies; the same flow covers sign in and sign up.
+ * Google sign-in through Neon Auth. Neon runs the OAuth handshake, then sends
+ * the student back to `next`; the proxy finishes creating the session there.
  */
-export default function GoogleButton({ mode, onSuccess, onNeedsMobile, onError }: GoogleButtonProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [scriptReady, setScriptReady] = useState(false);
-  const [rendered, setRendered] = useState(false);
+export default function GoogleButton({
+  label,
+  next,
+  onError,
+}: {
+  label: string;
+  next: string;
+  onError: (message: string) => void;
+}) {
   const [busy, setBusy] = useState(false);
 
-  // Keep the latest handlers without re-initialising Google on every render.
-  const handlers = useRef({ onSuccess, onNeedsMobile, onError });
-  useEffect(() => {
-    handlers.current = { onSuccess, onNeedsMobile, onError };
-  }, [onSuccess, onNeedsMobile, onError]);
-
-  const handleCredential = useCallback(async (response: { credential?: string }) => {
-    if (!response.credential) {
-      handlers.current.onError("Google didn't return a sign-in. Please try again.");
-      return;
-    }
+  async function handleClick() {
     setBusy(true);
-    const { ok, data } = await postJson("/api/auth/google", { credential: response.credential });
-    if (ok && data.user) {
-      handlers.current.onSuccess(data.user);
-      return;
+    const { error } = await neonCall(() =>
+      authClient.signIn.social({
+        provider: "google",
+        callbackURL: absoluteUrl(next),
+        errorCallbackURL: absoluteUrl("/login?error=google"),
+      })
+    );
+    // On success the browser is already navigating to Google.
+    if (error) {
+      setBusy(false);
+      onError(neonErrorMessage(error, "Couldn't start Google sign-in. Please try again."));
     }
-    setBusy(false);
-    if (ok && data.needsMobile && data.pendingToken && data.profile) {
-      handlers.current.onNeedsMobile({ pendingToken: data.pendingToken, profile: data.profile });
-    } else {
-      handlers.current.onError(data.error || "Google sign-in failed. Please try again.");
-    }
-  }, []);
-
-  useEffect(() => {
-    const gsi = window.google?.accounts?.id;
-    const container = containerRef.current;
-    if (!scriptReady || !gsi || !container) return;
-
-    gsi.initialize({
-      client_id: GOOGLE_CLIENT_ID,
-      callback: handleCredential,
-      auto_select: false,
-      cancel_on_tap_outside: true,
-      ux_mode: "popup",
-      context: mode === "signup" ? "signup" : "signin",
-      hd: "medhaviskillsuniversity.edu.in",
-    });
-
-    container.innerHTML = "";
-    gsi.renderButton(container, {
-      type: "standard",
-      theme: "outline",
-      size: "large",
-      shape: "rectangular",
-      logo_alignment: "center",
-      text: mode === "signup" ? "signup_with" : "continue_with",
-      width: Math.min(400, Math.max(220, Math.floor(container.clientWidth))),
-    });
-    setRendered(true);
-  }, [scriptReady, mode, handleCredential]);
+  }
 
   return (
-    <>
-      <Script
-        src="https://accounts.google.com/gsi/client"
-        strategy="afterInteractive"
-        onReady={() => setScriptReady(true)}
-        onError={() => handlers.current.onError("Couldn't load Google sign-in. Check your connection or use email.")}
-      />
-      <div className="relative h-11">
-        {!rendered && <div className="skeleton absolute inset-0 rounded-[4px]" aria-hidden />}
-        <div ref={containerRef} className="flex h-11 w-full justify-center" aria-label="Google sign-in" />
-        {busy && (
-          <div className="absolute inset-0 flex items-center justify-center gap-2 rounded-[4px] bg-white/90 text-sm font-medium text-surface-700">
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-            Checking your Google account
-          </div>
-        )}
-      </div>
-    </>
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={busy}
+      className="flex h-12 w-full cursor-pointer items-center justify-center gap-3 rounded-xl border border-surface-300 bg-white px-4 text-[15px] font-semibold text-surface-900 shadow-[0_1px_0_oklch(0.21_0.016_236/0.04)] hover:border-surface-400 hover:bg-surface-50 disabled:cursor-wait disabled:opacity-70"
+    >
+      {busy ? <Loader2 className="h-[18px] w-[18px] animate-spin text-surface-600" aria-hidden /> : <GoogleMark />}
+      {busy ? "Opening Google" : label}
+    </button>
   );
 }

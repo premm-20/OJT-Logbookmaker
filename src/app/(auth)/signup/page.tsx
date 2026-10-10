@@ -1,17 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { ArrowLeft, Check } from "lucide-react";
+import { useState } from "react";
+import { Check } from "lucide-react";
+import { authClient } from "@/lib/auth/client";
 import { isUniversityEmail, normalizeEmail, PASSWORD_MIN_LENGTH } from "@/lib/auth/config";
 import { cn } from "@/lib/utils";
-import { Divider, Field, FormAlert, OtpField, PasswordField, SubmitButton } from "@/components/auth/fields";
+import { Divider, Field, FormAlert, PasswordField, SubmitButton } from "@/components/auth/fields";
 import GoogleButton from "@/components/auth/google-button";
-import GoogleMobileStep from "@/components/auth/google-mobile-step";
-import { finishAuth, postJson, type PendingGoogleSignup } from "@/components/auth/auth-client";
+import VerifyEmailStep from "@/components/auth/verify-email-step";
+import { goTo, neonCall, neonErrorMessage, pendingMobile, postJson } from "@/components/auth/auth-client";
 
 type FieldName = "name" | "email" | "mobile" | "password";
-const RESEND_SECONDS = 45;
 
 export default function SignupPage() {
   const [step, setStep] = useState<"details" | "verify">("details");
@@ -19,26 +19,14 @@ export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [mobile, setMobile] = useState("");
   const [password, setPassword] = useState("");
-  const [otp, setOtp] = useState("");
-  const [challengeToken, setChallengeToken] = useState("");
-  const [debugCode, setDebugCode] = useState("");
-  const [fieldErrors, setFieldErrors] = useState<Partial<Record<FieldName | "otp", string>>>({});
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<FieldName, string>>>({});
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [cooldown, setCooldown] = useState(0);
-  const [pendingGoogle, setPendingGoogle] = useState<PendingGoogleSignup | null>(null);
+  // True when Neon signed the user in without sending a code (verification
+  // not required in the Neon console), so the app sends one itself.
+  const [sendCodeOnVerify, setSendCodeOnVerify] = useState(false);
 
   const cleanEmail = normalizeEmail(email);
-
-  useEffect(() => {
-    if (cooldown <= 0) return;
-    const timer = setTimeout(() => setCooldown((s) => s - 1), 1000);
-    return () => clearTimeout(timer);
-  }, [cooldown]);
-
-  if (pendingGoogle) {
-    return <GoogleMobileStep pending={pendingGoogle} next="/dashboard" onBack={() => setPendingGoogle(null)} />;
-  }
 
   function validateDetails() {
     const errors: typeof fieldErrors = {};
@@ -52,59 +40,62 @@ export default function SignupPage() {
     return Object.keys(errors).length === 0;
   }
 
-  async function sendCode() {
-    setError("");
-    setSubmitting(true);
-    const { ok, data } = await postJson("/api/auth/otp/send", {
-      purpose: "signup",
-      name: name.trim(),
-      email: cleanEmail,
-      mobile,
-    });
-    setSubmitting(false);
-    if (!ok || !data.challengeToken) {
-      setError(data.error || "Couldn't send the code.");
-      return false;
-    }
-    setChallengeToken(data.challengeToken);
-    setDebugCode(data.debugCode || "");
-    setCooldown(RESEND_SECONDS);
-    return true;
-  }
-
   async function handleDetails(e: React.FormEvent) {
     e.preventDefault();
+    setError("");
     if (!validateDetails()) return;
-    if (await sendCode()) {
-      setOtp("");
-      setStep("verify");
+    setSubmitting(true);
+
+    // 1. University domain + mobile number checks (this app's rules).
+    const check = await postJson("/api/account/check", { email: cleanEmail, mobile });
+    if (!check.ok) {
+      setSubmitting(false);
+      if (check.data.field === "email" || check.data.field === "mobile") {
+        setFieldErrors({ [check.data.field]: check.data.error });
+      } else {
+        setError(check.data.error || "Couldn't check your details.");
+      }
+      return;
     }
+
+    // 2. Create the account in Neon Auth.
+    const { data, error: signUpError } = await neonCall(() =>
+      authClient.signUp.email({
+        name: name.trim().replace(/\s+/g, " "),
+        email: cleanEmail,
+        password,
+      })
+    );
+    setSubmitting(false);
+    if (signUpError) {
+      setError(neonErrorMessage(signUpError, "Couldn't create your account."));
+      return;
+    }
+
+    pendingMobile.set(mobile);
+    if (data?.user?.emailVerified) {
+      await finishSetup();
+      return;
+    }
+    setSendCodeOnVerify(Boolean(data?.token));
+    setStep("verify");
   }
 
-  async function handleVerify(e: React.FormEvent) {
-    e.preventDefault();
-    if (otp.length !== 6) {
-      setFieldErrors({ otp: "Enter the 6-digit code from the email." });
+  // 3. Make sure there's a session, then attach the mobile number.
+  async function finishSetup() {
+    const session = await neonCall(() => authClient.getSession());
+    if (!session.data?.session) {
+      const { error: signInError } = await neonCall(() => authClient.signIn.email({ email: cleanEmail, password }));
+      if (signInError) throw new Error(neonErrorMessage(signInError, "Email verified. Please sign in."));
+    }
+    const onboard = await postJson("/api/account/onboard", { mobile, name: name.trim() });
+    if (!onboard.ok) {
+      // The account exists; onboarding will ask for the mobile number again.
+      goTo("/onboarding");
       return;
     }
-    setFieldErrors({});
-    setError("");
-    setSubmitting(true);
-    const { ok, data } = await postJson("/api/auth/signup", {
-      name: name.trim(),
-      email: cleanEmail,
-      mobile,
-      password,
-      otp,
-      challengeToken,
-    });
-    if (ok && data.user) {
-      finishAuth(data.user, "/dashboard");
-      return;
-    }
-    setSubmitting(false);
-    if (data.field === "otp") setFieldErrors({ otp: data.error });
-    else setError(data.error || "Couldn't create your account.");
+    pendingMobile.clear();
+    goTo("/dashboard");
   }
 
   const clearFieldError = (field: FieldName) => {
@@ -116,7 +107,16 @@ export default function SignupPage() {
     <div>
       <StepIndicator step={step === "details" ? 1 : 2} />
 
-      {step === "details" ? (
+      {step === "verify" ? (
+        <VerifyEmailStep
+          key="verify"
+          email={cleanEmail}
+          sendOnMount={sendCodeOnVerify}
+          onVerified={finishSetup}
+          onBack={() => setStep("details")}
+          backLabel="Edit details"
+        />
+      ) : (
         <div key="details" className="animate-fade-in">
           <h1 className="text-[28px] font-semibold leading-tight tracking-tight text-surface-950">
             Create your account
@@ -126,12 +126,7 @@ export default function SignupPage() {
           </p>
 
           <div className="mt-8">
-            <GoogleButton
-              mode="signup"
-              onSuccess={(user) => finishAuth(user, "/dashboard")}
-              onNeedsMobile={setPendingGoogle}
-              onError={setError}
-            />
+            <GoogleButton label="Sign up with Google" next="/dashboard" onError={setError} />
           </div>
 
           <Divider label="or sign up with email" />
@@ -193,7 +188,7 @@ export default function SignupPage() {
 
             {error && <FormAlert>{error}</FormAlert>}
 
-            <SubmitButton loading={submitting} loadingLabel="Sending code">
+            <SubmitButton loading={submitting} loadingLabel="Creating your account">
               Continue
             </SubmitButton>
           </form>
@@ -204,65 +199,6 @@ export default function SignupPage() {
               Sign in
             </Link>
           </p>
-        </div>
-      ) : (
-        <div key="verify" className="animate-fade-in">
-          <h1 className="text-[28px] font-semibold leading-tight tracking-tight text-surface-950">
-            Check your email
-          </h1>
-          <p className="mt-2 text-[15px] leading-relaxed text-surface-600">
-            We sent a 6-digit code to <span className="break-all font-semibold text-surface-900">{cleanEmail}</span>. It
-            expires in 15 minutes.
-          </p>
-
-          {debugCode && (
-            <div className="mt-6">
-              <FormAlert tone="info">
-                Email isn&apos;t set up on this server yet, so here&apos;s your code:{" "}
-                <span className="font-mono font-semibold tracking-wider">{debugCode}</span>
-              </FormAlert>
-            </div>
-          )}
-
-          <form onSubmit={handleVerify} noValidate className="mt-7 flex flex-col gap-5">
-            <OtpField
-              value={otp}
-              onChange={(value) => {
-                setOtp(value);
-                if (fieldErrors.otp) setFieldErrors({});
-              }}
-              error={fieldErrors.otp}
-            />
-
-            {error && <FormAlert>{error}</FormAlert>}
-
-            <SubmitButton loading={submitting} loadingLabel="Creating your account" disabled={otp.length !== 6}>
-              Create account
-            </SubmitButton>
-          </form>
-
-          <div className="mt-6 flex items-center justify-between text-sm">
-            <button
-              type="button"
-              onClick={() => {
-                setStep("details");
-                setError("");
-                setFieldErrors({});
-              }}
-              className="-ml-2 inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 font-medium text-surface-600 hover:bg-surface-100 hover:text-surface-900"
-            >
-              <ArrowLeft className="h-4 w-4" aria-hidden />
-              Edit details
-            </button>
-            <button
-              type="button"
-              onClick={sendCode}
-              disabled={cooldown > 0 || submitting}
-              className="cursor-pointer rounded-lg px-2 py-1 font-semibold text-primary-700 hover:bg-primary-50 disabled:cursor-not-allowed disabled:bg-transparent disabled:text-surface-500"
-            >
-              {cooldown > 0 ? `Resend in ${cooldown}s` : "Resend code"}
-            </button>
-          </div>
         </div>
       )}
     </div>

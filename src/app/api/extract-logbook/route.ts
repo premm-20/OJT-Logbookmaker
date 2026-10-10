@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextResponse } from "next/server";
+import { getSession, unauthorized } from "@/lib/auth/session";
 import { formatTime, ensureSpecialAchievements } from "@/lib/utils";
 import type { ExtractedDayEntry, ExtractedLogbook } from "@/lib/types";
 
@@ -497,6 +498,9 @@ async function callAI(text: string, geminiKey?: string, openrouterKey?: string):
 
 export async function POST(req: Request) {
   try {
+    // Signed-in students only: these routes spend AI / PDF processing time.
+    if (!(await getSession())) return unauthorized();
+
     const { text } = await req.json();
 
     if (!text || typeof text !== "string" || text.trim().length === 0) {

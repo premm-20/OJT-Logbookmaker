@@ -3,13 +3,18 @@
 import Link from "next/link";
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { authClient } from "@/lib/auth/client";
 import { isUniversityEmail, normalizeEmail, safeNextPath } from "@/lib/auth/config";
 import { Divider, Field, FormAlert, PasswordField, SubmitButton } from "@/components/auth/fields";
 import GoogleButton from "@/components/auth/google-button";
-import GoogleMobileStep from "@/components/auth/google-mobile-step";
-import { finishAuth, postJson, type PendingGoogleSignup } from "@/components/auth/auth-client";
+import VerifyEmailStep from "@/components/auth/verify-email-step";
+import { goTo, isEmailNotVerified, neonCall, neonErrorMessage } from "@/components/auth/auth-client";
 
 const EMAIL_HINT = "Use your @medhaviskillsuniversity.edu.in address.";
+
+const URL_ERRORS: Record<string, string> = {
+  google: "Google sign-in didn't finish. Try again, or use your email and password.",
+};
 
 export default function LoginPage() {
   return (
@@ -20,22 +25,41 @@ export default function LoginPage() {
 }
 
 function LoginForm() {
-  const next = safeNextPath(useSearchParams().get("next"));
+  const params = useSearchParams();
+  const next = safeNextPath(params.get("next"));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [emailError, setEmailError] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState(URL_ERRORS[params.get("error") || ""] || "");
   const [submitting, setSubmitting] = useState(false);
-  const [pendingGoogle, setPendingGoogle] = useState<PendingGoogleSignup | null>(null);
+  const [verifying, setVerifying] = useState(false);
 
-  if (pendingGoogle) {
-    return <GoogleMobileStep pending={pendingGoogle} next={next} onBack={() => setPendingGoogle(null)} />;
+  const cleanEmail = normalizeEmail(email);
+
+  async function signIn() {
+    const { error: signInError } = await neonCall(() => authClient.signIn.email({ email: cleanEmail, password }));
+    return signInError;
+  }
+
+  if (verifying) {
+    return (
+      <VerifyEmailStep
+        email={cleanEmail}
+        sendOnMount
+        backLabel="Back to sign in"
+        onBack={() => setVerifying(false)}
+        onVerified={async () => {
+          const signInError = await signIn();
+          if (signInError) throw new Error(neonErrorMessage(signInError, "Verified. Please sign in again."));
+          goTo(next);
+        }}
+      />
+    );
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    const cleanEmail = normalizeEmail(email);
     if (!isUniversityEmail(cleanEmail)) {
       setEmailError(EMAIL_HINT);
       return;
@@ -46,13 +70,18 @@ function LoginForm() {
     }
 
     setSubmitting(true);
-    const { ok, data } = await postJson("/api/auth/signin", { email: cleanEmail, password });
-    if (ok && data.user) {
-      finishAuth(data.user, next);
+    const signInError = await signIn();
+    if (!signInError) {
+      // The dashboard layout sends first-time students to finish setup.
+      goTo(next);
       return;
     }
     setSubmitting(false);
-    setError(data.error || "Couldn't sign you in.");
+    if (isEmailNotVerified(signInError)) {
+      setVerifying(true);
+      return;
+    }
+    setError(neonErrorMessage(signInError, "Couldn't sign you in."));
   }
 
   return (
@@ -63,12 +92,7 @@ function LoginForm() {
       </p>
 
       <div className="mt-8">
-        <GoogleButton
-          mode="signin"
-          onSuccess={(user) => finishAuth(user, next)}
-          onNeedsMobile={setPendingGoogle}
-          onError={setError}
-        />
+        <GoogleButton label="Continue with Google" next={next} onError={setError} />
       </div>
 
       <Divider label="or use your email" />
@@ -86,8 +110,7 @@ function LoginForm() {
             setError("");
           }}
           onBlur={() => {
-            const clean = normalizeEmail(email);
-            if (clean && !isUniversityEmail(clean)) setEmailError(EMAIL_HINT);
+            if (cleanEmail && !isUniversityEmail(cleanEmail)) setEmailError(EMAIL_HINT);
           }}
           error={emailError}
         />
@@ -131,7 +154,7 @@ function AuthFormSkeleton() {
     <div aria-hidden className="flex flex-col gap-4">
       <div className="skeleton h-8 w-32" />
       <div className="skeleton h-4 w-64" />
-      <div className="skeleton mt-6 h-11 w-full" />
+      <div className="skeleton mt-6 h-12 w-full" />
       <div className="skeleton mt-6 h-12 w-full" />
       <div className="skeleton h-12 w-full" />
       <div className="skeleton h-12 w-full" />

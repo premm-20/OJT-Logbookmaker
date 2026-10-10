@@ -61,6 +61,8 @@ function parseUserAgent(ua: string): { device: string; browser: string } {
 }
 
 export async function recordUserLogin(params: {
+  /** Stable id (e.g. per auth session) so repeat calls don't duplicate the log. */
+  sessionId?: string;
   userId?: string;
   name: string;
   email: string;
@@ -75,7 +77,7 @@ export async function recordUserLogin(params: {
   const now = new Date().toISOString();
 
   const session: LoginSession = {
-    id: `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    id: params.sessionId || `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     userId,
     name: params.name.trim(),
     email: params.email.trim().toLowerCase(),
@@ -93,6 +95,7 @@ export async function recordUserLogin(params: {
     ensureDataFile();
     const content = fs.readFileSync(DATA_FILE, "utf8");
     const sessions: LoginSession[] = JSON.parse(content || "[]");
+    if (sessions.some((s) => s.id === session.id)) return session;
     sessions.unshift(session);
     // Keep last 1000 login records
     if (sessions.length > 1000) {

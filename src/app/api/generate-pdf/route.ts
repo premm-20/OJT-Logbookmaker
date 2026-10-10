@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getSession, unauthorized } from "@/lib/auth/session";
 import fs from "fs";
 import path from "path";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
@@ -125,6 +126,9 @@ function getTemplatePath(): string {
 
 export async function POST(req: Request) {
   try {
+    // Signed-in students only: these routes spend AI / PDF processing time.
+    if (!(await getSession())) return unauthorized();
+
     const body = await req.json();
     const mode: "single" | "complete" = body.mode || "single";
     const entries: SingleDayEntry[] = body.entries || (body.entry ? [body.entry] : []);

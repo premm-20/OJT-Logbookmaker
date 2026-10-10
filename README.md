@@ -27,8 +27,7 @@ AI-powered form filling for your OJT (On-the-Job Training) logbook. Paste your d
 | Styling      | Tailwind CSS v4                         |
 | Icons        | Lucide React                            |
 | Database     | Neon Serverless PostgreSQL              |
-| Auth         | Signed HttpOnly session cookie, scrypt passwords, Google Identity Services |
-| Email        | Nodemailer (Gmail SMTP)                 |
+| Auth         | Neon Auth (Managed Better Auth): email + password, Google, email codes |
 | AI           | Google Gemini 2.0 Flash                 |
 | PDF          | jsPDF (client-side, programmatic)       |
 
@@ -52,18 +51,14 @@ cp .env.example .env.local
 Fill in your values:
 
 ```env
-AUTH_SECRET=long_random_string          # openssl rand -base64 48
-NEXT_PUBLIC_GOOGLE_CLIENT_ID=xxxx.apps.googleusercontent.com
+NEON_AUTH_BASE_URL=https://ep-xxx.neonauth.us-east-2.aws.neon.tech/neondb/auth
+NEON_AUTH_COOKIE_SECRET=long_random_string   # openssl rand -base64 32
+AUTH_SECRET=long_random_string               # signs the admin token
 ADMIN_USERNAME=your_admin_id
 ADMIN_PASSWORD=long_unique_password
 DATABASE_URL=postgresql://user:password@ep-xyz.neon.tech/neondb?sslmode=require
 GEMINI_API_KEY=your_gemini_api_key
-SMTP_USER=ojtlogbookmaker@gmail.com
-SMTP_PASS=your_16_character_app_password
 ```
-
-`AUTH_SECRET` is required in production. It signs the session cookie and the email
-verification codes; changing it signs everyone out.
 
 `ADMIN_USERNAME` and `ADMIN_PASSWORD` are the credentials for the admin portal at `/admin`.
 If either is unset, admin login is disabled. Admin sessions are signed with `AUTH_SECRET`
@@ -71,26 +66,36 @@ and expire after 8 hours; login is limited to 5 attempts per IP per 15 minutes.
 
 `DATABASE_URL` is required: there is no built-in fallback database.
 
-### Google sign-in
+### Neon Auth (student sign in)
 
-1. In [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials), open (or create) an OAuth client of type **Web application**.
-2. Under **Authorized JavaScript origins**, add every origin you serve from, e.g. `http://localhost:3000` and your production URL. No redirect URI is needed (popup flow).
-3. Put the client ID in `NEXT_PUBLIC_GOOGLE_CLIENT_ID`.
+Student accounts, passwords, Google sign-in, email verification and password reset are handled
+by [Neon Auth](https://neon.com/docs/auth/overview). In the Neon Console, open your project, then
+**Auth**:
 
-Only `@medhaviskillsuniversity.edu.in` Google accounts are accepted. The first time a student
-continues with Google they are asked for their mobile number, then the account is created.
+1. **Enable Auth**, then copy the Auth URL into `NEON_AUTH_BASE_URL`.
+2. **Settings > Auth**: turn on **Sign-up with Email**, then **Verify at Sign-up** with
+   **Verification code** as the method. Students type a 6-digit code; links need a custom SMTP provider.
+3. **Configuration > Domains**: add your production URL, e.g. `https://ojt-logbookmaker.vercel.app`.
+   Localhost is allowed automatically. For Vercel previews add a wildcard such as
+   `https://*-yourteam.vercel.app`.
+4. **Google**: works immediately with Neon's shared Google app (users see "continue to neon.tech").
+   For production, create your own Google OAuth client (Web application) and set its
+   **Authorized redirect URI** to `{NEON_AUTH_BASE_URL}/callback/google`, then paste the client ID and
+   secret under **Settings > Auth > OAuth providers**. No JavaScript origins are needed.
+5. Before launch: set the **Application name**, add a custom SMTP provider (the shared sender is
+   rate limited), and turn off **Allow Localhost**.
 
-### Email codes in development
-
-Without SMTP (or `RESEND_API_KEY`) configured, `next dev` prints sign-up and reset codes in the
-terminal and shows them on the page. In production, email delivery is required.
+How it fits together: Neon owns the identity; this app keeps `app_users`, which links each Neon user
+to the `usr_<mobile>` account their entries live under. Only `@medhaviskillsuniversity.edu.in`
+accounts with a verified email can use the logbook. The first time a student signs in (email or
+Google) they add their mobile number once at `/onboarding`.
 
 ### 3. Neon Database Setup
 
 1. Create a serverless PostgreSQL database at [neon.tech](https://neon.tech)
 2. Copy your connection string into `DATABASE_URL` in `.env.local` or Railway / Vercel environment settings.
 
-The `app_users` table (accounts) is created automatically on first use, and missing
+The `app_users` table (links Neon users to logbook accounts) is created automatically on first use, and missing
 `user_profiles` columns are added automatically. Account IDs are `usr_<mobile>`, so students who
 used the earlier portal keep their existing entries when they sign up with the same number.
 
@@ -258,8 +263,9 @@ src/
 │   │   ├── login/page.tsx
 │   │   ├── signup/page.tsx               # details → email code
 │   │   └── forgot-password/page.tsx
-│   ├── api/auth/                         # signin, signup, reset, otp/send,
-│   │                                     # google, google/complete, session, logout
+│   ├── onboarding/                       # one-time mobile number / verify / wrong-account step
+│   ├── api/auth/[...path]/route.ts       # Neon Auth proxy (sign in/up, Google, codes, reset)
+│   ├── api/account/                      # check (sign-up pre-check), onboard (attach mobile)
 │   ├── api/extract-logbook/route.ts      # AI extraction API
 │   └── dashboard/
 │       ├── page.tsx                      # Entry list
@@ -276,14 +282,14 @@ src/
 │   ├── logbook-preview.tsx              # A4 preview component
 │   └── entry-card.tsx                   # Dashboard entry card
 ├── lib/
-│   ├── auth/                            # sessions, passwords, users, Google, rate limits
+│   ├── auth/                            # Neon Auth server/client, session → account, admin token
 │   ├── db.ts                            # Neon Serverless PostgreSQL connection
 │   ├── login-tracker.ts                 # Audit logging & database session tracking
 │   ├── pdf-generator.ts                 # jsPDF document generation
 │   ├── types.ts                         # TypeScript interfaces
 │   ├── validation.ts                    # Text verification logic
 │   └── utils.ts                         # Date/time utilities
-└── proxy.ts                              # Verifies the session for /dashboard and /api
+└── proxy.ts                              # Neon Auth middleware for /dashboard and /onboarding
 ```
 
 ## Deployment

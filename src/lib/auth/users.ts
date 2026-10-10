@@ -1,14 +1,18 @@
 import { getDb } from "@/lib/db";
-import type { SessionUser } from "./tokens";
+import type { NeonUser, SessionUser } from "./session";
 
+/**
+ * `app_users` links a Neon Auth user to the logbook account its data lives
+ * under. IDs stay `usr_<mobile>` so students who used the earlier portal keep
+ * their existing entries, profile and feedback rows.
+ */
 export interface UserRecord {
   id: string;
   name: string;
   email: string;
   mobile: string;
-  password_hash: string | null;
-  google_sub: string | null;
   avatar_url: string | null;
+  neon_user_id: string | null;
 }
 
 export class AuthError extends Error {
@@ -19,7 +23,7 @@ export class AuthError extends Error {
 
 let tableReady: Promise<void> | null = null;
 
-/** Creates the accounts table on first use, so no manual migration is needed. */
+/** Creates / upgrades the accounts table on first use. */
 export function ensureUsersTable(): Promise<void> {
   if (!tableReady) {
     tableReady = (async () => {
@@ -30,13 +34,14 @@ export function ensureUsersTable(): Promise<void> {
           name TEXT NOT NULL,
           email TEXT NOT NULL UNIQUE,
           mobile TEXT NOT NULL UNIQUE,
-          password_hash TEXT,
-          google_sub TEXT UNIQUE,
           avatar_url TEXT,
+          neon_user_id TEXT UNIQUE,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           last_login_at TIMESTAMPTZ
         );
       `;
+      // Tables created by the earlier self-hosted auth lack this column.
+      await sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS neon_user_id TEXT UNIQUE`;
     })().catch((err) => {
       tableReady = null;
       throw err;
@@ -45,10 +50,6 @@ export function ensureUsersTable(): Promise<void> {
   return tableReady;
 }
 
-/**
- * User IDs stay `usr_<mobile>` so students who used the old portal keep their
- * existing entries, profile and feedback rows.
- */
 export function userIdForMobile(mobile: string): string {
   return `usr_${mobile}`;
 }
@@ -63,35 +64,39 @@ export function toSessionUser(user: UserRecord): SessionUser {
   };
 }
 
-async function findOne(rows: Promise<Record<string, unknown>[]>): Promise<UserRecord | null> {
-  const result = await rows;
-  return (result[0] as unknown as UserRecord) ?? null;
-}
+const COLUMNS = "id, name, email, mobile, avatar_url, neon_user_id";
 
-const COLUMNS = "id, name, email, mobile, password_hash, google_sub, avatar_url";
-
-export async function findUserByEmail(email: string): Promise<UserRecord | null> {
+async function selectOne(where: string, value: string): Promise<UserRecord | null> {
   await ensureUsersTable();
-  const sql = getDb();
-  return findOne(sql.query(`SELECT ${COLUMNS} FROM app_users WHERE email = $1 LIMIT 1`, [email]));
-}
-
-export async function findUserByMobile(mobile: string): Promise<UserRecord | null> {
-  await ensureUsersTable();
-  const sql = getDb();
-  return findOne(sql.query(`SELECT ${COLUMNS} FROM app_users WHERE mobile = $1 LIMIT 1`, [mobile]));
-}
-
-export async function findUserByGoogleSub(sub: string): Promise<UserRecord | null> {
-  await ensureUsersTable();
-  const sql = getDb();
-  return findOne(sql.query(`SELECT ${COLUMNS} FROM app_users WHERE google_sub = $1 LIMIT 1`, [sub]));
+  const rows = await getDb().query(`SELECT ${COLUMNS} FROM app_users WHERE ${where} = $1 LIMIT 1`, [value]);
+  return (rows[0] as unknown as UserRecord) ?? null;
 }
 
 /**
- * Before the account system existed, anyone could sign in as `usr_<mobile>`.
- * If that ID already holds a profile or login history under a different
- * email, refuse to hand it to a new account.
+ * Finds the account for a verified Neon user. An account created before
+ * Neon Auth (same university email) is linked on first sign in; Neon has
+ * already verified the email, so the link is safe.
+ */
+export async function findUserForNeonUser(neonUser: NeonUser): Promise<UserRecord | null> {
+  const linked = await selectOne("neon_user_id", neonUser.id);
+  if (linked) return linked;
+
+  const byEmail = await selectOne("email", neonUser.email);
+  if (!byEmail || byEmail.neon_user_id) return null;
+
+  const rows = await getDb()`
+    UPDATE app_users
+    SET neon_user_id = ${neonUser.id}, avatar_url = COALESCE(avatar_url, ${neonUser.image})
+    WHERE id = ${byEmail.id} AND neon_user_id IS NULL
+    RETURNING id, name, email, mobile, avatar_url, neon_user_id
+  `;
+  return (rows[0] as unknown as UserRecord) ?? null;
+}
+
+/**
+ * Before accounts existed, anyone could sign in as `usr_<mobile>`. If that ID
+ * already holds a profile or login history under a different email, refuse
+ * to hand it to a new account.
  */
 async function assertLegacyDataBelongsTo(userId: string, email: string): Promise<void> {
   const sql = getDb();
@@ -117,60 +122,41 @@ async function assertLegacyDataBelongsTo(userId: string, email: string): Promise
   }
 }
 
-export async function assertAvailable(email: string, mobile: string): Promise<void> {
-  if (await findUserByEmail(email)) {
-    throw new AuthError("An account with this email already exists. Sign in instead.", 409);
-  }
-  if (await findUserByMobile(mobile)) {
+/** Checks a mobile number can be used for this email. Throws AuthError if not. */
+export async function assertMobileAvailable(email: string, mobile: string): Promise<void> {
+  const existing = await selectOne("mobile", mobile);
+  if (existing && existing.email !== email) {
     throw new AuthError("This mobile number is already registered to another account.", 409);
   }
   await assertLegacyDataBelongsTo(userIdForMobile(mobile), email);
 }
 
-export async function createUser(input: {
-  name: string;
-  email: string;
-  mobile: string;
-  passwordHash?: string | null;
-  googleSub?: string | null;
-  avatarUrl?: string | null;
-}): Promise<UserRecord> {
-  await assertAvailable(input.email, input.mobile);
-  const sql = getDb();
-  const id = userIdForMobile(input.mobile);
+/** Creates the logbook account for a verified Neon user (one-time onboarding). */
+export async function createUserForNeonUser(neonUser: NeonUser, mobile: string, name?: string): Promise<UserRecord> {
+  const existing = await findUserForNeonUser(neonUser);
+  if (existing) return existing;
+
+  if (await selectOne("email", neonUser.email)) {
+    throw new AuthError("This email is already linked to another sign-in. Contact your coordinator.", 409);
+  }
+  await assertMobileAvailable(neonUser.email, mobile);
+
   try {
-    const rows = await sql`
-      INSERT INTO app_users (id, name, email, mobile, password_hash, google_sub, avatar_url, last_login_at)
-      VALUES (${id}, ${input.name}, ${input.email}, ${input.mobile}, ${input.passwordHash ?? null},
-              ${input.googleSub ?? null}, ${input.avatarUrl ?? null}, NOW())
-      RETURNING id, name, email, mobile, password_hash, google_sub, avatar_url
+    const rows = await getDb()`
+      INSERT INTO app_users (id, name, email, mobile, avatar_url, neon_user_id, last_login_at)
+      VALUES (${userIdForMobile(mobile)}, ${name || neonUser.name}, ${neonUser.email}, ${mobile},
+              ${neonUser.image}, ${neonUser.id}, NOW())
+      RETURNING id, name, email, mobile, avatar_url, neon_user_id
     `;
     return rows[0] as unknown as UserRecord;
   } catch (err) {
     if ((err as { code?: string })?.code === "23505") {
-      throw new AuthError("An account with these details already exists. Sign in instead.", 409);
+      throw new AuthError("This mobile number is already registered to another account.", 409);
     }
     throw err;
   }
 }
 
-export async function linkGoogleAccount(userId: string, sub: string, avatarUrl: string | null): Promise<UserRecord> {
-  const sql = getDb();
-  const rows = await sql`
-    UPDATE app_users
-    SET google_sub = ${sub}, avatar_url = COALESCE(avatar_url, ${avatarUrl}), last_login_at = NOW()
-    WHERE id = ${userId}
-    RETURNING id, name, email, mobile, password_hash, google_sub, avatar_url
-  `;
-  return rows[0] as unknown as UserRecord;
-}
-
-export async function setPassword(userId: string, passwordHash: string): Promise<void> {
-  const sql = getDb();
-  await sql`UPDATE app_users SET password_hash = ${passwordHash} WHERE id = ${userId}`;
-}
-
 export async function touchLastLogin(userId: string): Promise<void> {
-  const sql = getDb();
-  await sql`UPDATE app_users SET last_login_at = NOW() WHERE id = ${userId}`;
+  await getDb()`UPDATE app_users SET last_login_at = NOW() WHERE id = ${userId}`;
 }

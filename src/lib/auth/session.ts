@@ -1,41 +1,62 @@
-import { cookies } from "next/headers";
+import { cache } from "react";
 import { NextResponse } from "next/server";
-import { SESSION_COOKIE, SESSION_MAX_AGE_SECONDS } from "./config";
-import { createSessionToken, readSessionToken, type SessionUser } from "./tokens";
+import { auth } from "./server";
+import { isUniversityEmail } from "./config";
+import { findUserForNeonUser, toSessionUser } from "./users";
 
-export type { SessionUser };
+export interface SessionUser {
+  id: string;
+  name: string;
+  email: string;
+  mobile: string;
+  avatarUrl: string | null;
+}
 
-/** Reads and verifies the signed session cookie (route handlers, server components). */
+export interface NeonUser {
+  id: string;
+  name: string;
+  email: string;
+  image: string | null;
+  emailVerified: boolean;
+}
+
+export type AuthState =
+  | { status: "signed-out" }
+  | { status: "wrong-domain"; neonUser: NeonUser }
+  | { status: "unverified"; neonUser: NeonUser }
+  | { status: "needs-mobile"; neonUser: NeonUser }
+  | { status: "ready"; user: SessionUser; neonUser: NeonUser; sessionId: string };
+
+/**
+ * Resolves the Neon Auth session into this app's student account.
+ * Cached per request, so layouts and pages can call it freely.
+ */
+export const getAuthState = cache(async (): Promise<AuthState> => {
+  const { data } = await auth.getSession();
+  const user = data?.user;
+  if (!user) return { status: "signed-out" };
+
+  const neonUser: NeonUser = {
+    id: user.id,
+    name: user.name || user.email.split("@")[0],
+    email: user.email.trim().toLowerCase(),
+    image: user.image ?? null,
+    emailVerified: Boolean(user.emailVerified),
+  };
+
+  if (!isUniversityEmail(neonUser.email)) return { status: "wrong-domain", neonUser };
+  if (!neonUser.emailVerified) return { status: "unverified", neonUser };
+
+  const account = await findUserForNeonUser(neonUser);
+  if (!account) return { status: "needs-mobile", neonUser };
+
+  return { status: "ready", user: toSessionUser(account), neonUser, sessionId: data.session.id };
+});
+
+/** The signed-in student with a complete account, or null. Used by API routes. */
 export async function getSession(): Promise<SessionUser | null> {
-  const store = await cookies();
-  return readSessionToken(store.get(SESSION_COOKIE)?.value);
-}
-
-export function setSessionCookie(response: NextResponse, user: SessionUser): void {
-  response.cookies.set(SESSION_COOKIE, createSessionToken(user, SESSION_MAX_AGE_SECONDS), {
-    path: "/",
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    maxAge: SESSION_MAX_AGE_SECONDS,
-  });
-}
-
-export function clearSessionCookie(response: NextResponse): void {
-  response.cookies.set(SESSION_COOKIE, "", {
-    path: "/",
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    maxAge: 0,
-  });
-}
-
-/** Standard JSON reply for a successful sign in / sign up. */
-export function authSuccess(user: SessionUser, redirect = "/dashboard"): NextResponse {
-  const response = NextResponse.json({ success: true, user, redirect });
-  setSessionCookie(response, user);
-  return response;
+  const state = await getAuthState();
+  return state.status === "ready" ? state.user : null;
 }
 
 export function unauthorized(): NextResponse {
