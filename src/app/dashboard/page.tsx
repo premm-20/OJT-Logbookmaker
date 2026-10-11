@@ -146,7 +146,7 @@ export default function DashboardPage() {
             </p>
           </div>
           <Link
-            href="/dashboard/logbook"
+            href="/dashboard/edit-pdf?source=saved"
             className="relative flex h-11 shrink-0 items-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-primary-900 hover:bg-primary-50"
           >
             <FileText className="h-4 w-4" />

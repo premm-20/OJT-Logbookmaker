@@ -231,11 +231,11 @@ export default function EntryDetailPage() {
         </div>
 
         <Link
-          href="/dashboard/logbook"
+          href="/dashboard/edit-pdf?source=saved"
           className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-surface-100 hover:bg-surface-200 text-surface-800 text-xs font-semibold border border-surface-300 transition-all"
         >
           <BookOpen className="w-3.5 h-3.5 text-primary-600" />
-          View Whole Logbook (90 Pages)
+          Open saved logbook
         </Link>
       </div>
 

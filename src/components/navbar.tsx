@@ -15,7 +15,6 @@ const PAGE_TITLES: Record<string, string> = {
   "/dashboard/profile": "Profile",
   "/dashboard/edit-pdf": "Edit PDF",
   "/dashboard/feedback": "Supervisor feedback",
-  "/dashboard/logbook": "Complete logbook",
 };
 
 interface NavbarProps {

@@ -622,7 +622,7 @@ function FillLogbookForm() {
 
     keepDraft.current = false;
     discardDraft({ remount: false });
-    router.push("/dashboard/logbook");
+    router.push("/dashboard/edit-pdf?source=saved");
   }
 
   // =====================================================
@@ -705,7 +705,7 @@ function FillLogbookForm() {
 
     keepDraft.current = false;
     discardDraft({ remount: false });
-    router.push("/dashboard/logbook");
+    router.push("/dashboard/edit-pdf?source=saved");
   }
 
   // =====================================================
@@ -1111,8 +1111,7 @@ function FillLogbookForm() {
                 Upload PRD / Project Document
               </h2>
               <p className="text-xs text-surface-800/60 mt-1">
-                Upload your PRD or project description file. AI will read it and auto-write logbook entries for
-                every working day <strong>(Mon–Sat, Sundays skipped)</strong> in your chosen date range.
+                Upload your PRD or project description file.
               </p>
             </div>
 
@@ -1171,9 +1170,6 @@ function FillLogbookForm() {
                 <span className="text-xs font-bold text-surface-800 uppercase tracking-wider flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5 text-primary-600" />
                   OJT Schedule & Role Details
-                </span>
-                <span className="text-[11px] font-semibold text-surface-500">
-                  AI will write logbook entries for every working day in this range
                 </span>
               </div>
 

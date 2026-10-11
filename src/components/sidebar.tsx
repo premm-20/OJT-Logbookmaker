@@ -8,7 +8,6 @@ import {
   User,
   FileEdit,
   MessageSquare,
-  FileText,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -20,10 +19,9 @@ import type { ClientUser } from "@/lib/auth/client-identity";
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/dashboard/new-entry", label: "Fill logbook", icon: PlusCircle },
-  { href: "/dashboard/profile", label: "Profile", icon: User },
   { href: "/dashboard/edit-pdf", label: "Edit PDF", icon: FileEdit },
+  { href: "/dashboard/profile", label: "Profile", icon: User },
   { href: "/dashboard/feedback", label: "Supervisor feedback", icon: MessageSquare },
-  { href: "/dashboard/logbook", label: "Complete logbook", icon: FileText },
 ];
 
 export default function Sidebar({ user }: { user: ClientUser }) {
