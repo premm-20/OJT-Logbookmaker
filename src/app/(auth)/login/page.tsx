@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { safeNextPath, UNIVERSITY_DOMAIN_LABEL } from "@/lib/auth/config";
+import { safeNextPath } from "@/lib/auth/config";
 import { FormAlert } from "@/components/auth/fields";
 import GoogleButton from "@/components/auth/google-button";
 
@@ -28,7 +28,7 @@ function LoginForm() {
     <div className="animate-fade-in">
       <h1 className="text-[28px] font-semibold leading-tight tracking-tight text-surface-950">Sign in</h1>
       <p className="mt-2 text-[15px] leading-relaxed text-surface-600">
-        Use your university Google account ({UNIVERSITY_DOMAIN_LABEL}).
+        Use your university Google account.
       </p>
 
       <div className="mt-8 flex flex-col gap-4">

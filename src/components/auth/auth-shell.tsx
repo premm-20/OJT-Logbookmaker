@@ -2,7 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import BrandMark from "@/components/brand-mark";
 import dayPage from "../../../public/templates/day_page_bg.png";
-import coverPage from "../../../public/templates/page_3_bg.png";
+import coverPage from "../../../public/templates/page_3_cover.png";
 
 export default function AuthShell({ children }: { children: React.ReactNode }) {
   return (
@@ -20,7 +20,7 @@ export default function AuthShell({ children }: { children: React.ReactNode }) {
         </main>
 
         <footer className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-surface-600">
-          <span>Medhavi Skills University</span>
+          <span>OJT Logbook</span>
           <Link href="/" className="rounded hover:text-surface-900">
             Back to home
           </Link>

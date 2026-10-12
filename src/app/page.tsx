@@ -3,7 +3,7 @@ import Link from "next/link";
 import { ArrowRight, ClipboardPaste, FileDown, ListChecks, PencilLine, UserRound, MessageSquareText } from "lucide-react";
 import BrandMark from "@/components/brand-mark";
 import dayPage from "../../public/templates/day_page_bg.png";
-import coverPage from "../../public/templates/page_3_bg.png";
+import coverPage from "../../public/templates/page_3_cover.png";
 
 const EXAMPLE_NOTE =
   "Reached the plant at 9 and joined the morning safety briefing. Shadowed the quality team while they inspected the CNC turning batch for job 4471. Learned how to read the tolerance chart and why the first piece is always measured twice. Used a vernier caliper and the bore gauge for the first time. Supervisor let me sign off three pieces on my own.";
@@ -277,7 +277,7 @@ export default function LandingPage() {
       <footer className="border-t border-surface-200">
         <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-8 text-sm text-surface-600 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <BrandMark compact className="opacity-80" />
-          <p>For OJT learners at Medhavi Skills University.</p>
+          <p>Built for OJT learners.</p>
         </div>
       </footer>
     </div>
