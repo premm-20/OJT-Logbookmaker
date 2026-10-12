@@ -2,7 +2,7 @@ import { neon } from "@neondatabase/serverless";
 
 /**
  * Neon PostgreSQL Serverless Client
- * Works across Vercel, Railway, and local development.
+ * Used on Vercel and in local development.
  */
 export function getDb() {
   const connectionString = process.env.DATABASE_URL;

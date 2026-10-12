@@ -93,7 +93,7 @@ Google) they add their mobile number once at `/onboarding`.
 ### 3. Neon Database Setup
 
 1. Create a serverless PostgreSQL database at [neon.tech](https://neon.tech)
-2. Copy your connection string into `DATABASE_URL` in `.env.local` or Railway / Vercel environment settings.
+2. Copy your connection string into `DATABASE_URL` in `.env.local` and in your Vercel environment variables.
 
 The `app_users` table (links Neon users to logbook accounts) is created automatically on first use, and missing
 `user_profiles` columns are added automatically. Account IDs are `usr_<mobile>`, so students who
@@ -294,21 +294,14 @@ src/
 
 ## Deployment
 
-### Vercel (Recommended)
+The app is deployed on [Vercel](https://vercel.com).
 
 1. Push to GitHub
-2. Import in [Vercel](https://vercel.com)
-3. Set environment variables in Vercel dashboard
-4. Deploy
+2. Import the repository in Vercel
+3. Add the environment variables from `.env.example` in the Vercel dashboard (Settings > Environment Variables)
+4. Deploy. Every push to `main` redeploys automatically.
 
-### Other Platforms
-
-```bash
-npm run build
-npm start
-```
-
-Ensure the `GEMINI_API_KEY` environment variable is set server-side (not exposed to the client).
+Keep `GEMINI_API_KEY` and the other secrets server-side (no `NEXT_PUBLIC_` prefix).
 
 ## License
 
