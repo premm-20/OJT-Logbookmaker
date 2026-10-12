@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
-import { normalizeEmail, normalizeMobile } from "@/lib/auth/config";
+import { normalizeEmail } from "@/lib/auth/config";
 import { verifyUniversityEmail } from "@/lib/email-verifier";
 import { rateLimit, tooManyAttemptsMessage } from "@/lib/auth/rate-limit";
 import { clientIp } from "@/lib/auth/session";
-import { AuthError, assertMobileAvailable } from "@/lib/auth/users";
 
 /**
- * Pre-checks sign-up details before the account is created in Neon Auth, so
- * students learn about a wrong domain or a taken mobile number up front.
+ * Checks a sign-up email before a code is sent: only Medhavi Skills
+ * University addresses with a working mail domain are accepted.
  */
 export async function POST(request: Request) {
   try {
@@ -18,8 +17,6 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => ({}));
     const email = normalizeEmail(body.email);
-    const mobile = normalizeMobile(body.mobile);
-
     const emailCheck = await verifyUniversityEmail(email);
     if (!emailCheck.valid) {
       return NextResponse.json(
@@ -27,17 +24,9 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
-    if (mobile.length !== 10) {
-      return NextResponse.json({ error: "Mobile number must be 10 digits.", field: "mobile" }, { status: 400 });
-    }
-
-    await assertMobileAvailable(email, mobile);
     return NextResponse.json({ ok: true });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: err.message, field: "mobile" }, { status: err.status });
-    }
     console.error("[account/check]", err);
-    return NextResponse.json({ error: "Couldn't check your details. Please try again." }, { status: 500 });
+    return NextResponse.json({ error: "Couldn't check your email. Please try again." }, { status: 500 });
   }
 }

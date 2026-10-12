@@ -9,33 +9,39 @@ import { neonCall, neonErrorMessage } from "./auth-client";
 const RESEND_SECONDS = 45;
 
 /**
- * Enter the 6-digit code Neon Auth emails to confirm an address.
- * `sendOnMount` is for flows where Neon hasn't already sent one.
+ * Enter the 6-digit code Neon Auth emails.
+ *  - "email-verification": confirms the address of an existing account.
+ *  - "sign-in": signs in with the code (creating the account if it's new).
+ * `sendOnMount` is for flows where no code has been sent yet.
  */
 export default function VerifyEmailStep({
   email,
+  purpose = "email-verification",
   sendOnMount,
   onVerified,
   onBack,
   backLabel = "Edit details",
+  submitLabel = "Verify email",
 }: {
   email: string;
+  purpose?: "email-verification" | "sign-in";
   sendOnMount: boolean;
   onVerified: () => Promise<void> | void;
   onBack?: () => void;
   backLabel?: string;
+  submitLabel?: string;
 }) {
   const [otp, setOtp] = useState("");
   const [otpError, setOtpError] = useState("");
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  // A code is either already on its way from Neon or about to be sent on mount.
+  // A code is either already on its way or about to be sent on mount.
   const [cooldown, setCooldown] = useState(RESEND_SECONDS);
 
   async function requestCode(): Promise<string | null> {
     const { error: sendError } = await neonCall(() =>
-      authClient.emailOtp.sendVerificationOtp({ email, type: "email-verification" })
+      authClient.emailOtp.sendVerificationOtp({ email, type: purpose })
     );
     return sendError ? neonErrorMessage(sendError, "Couldn't send the code.") : null;
   }
@@ -77,10 +83,13 @@ export default function VerifyEmailStep({
     setError("");
     setInfo("");
     setSubmitting(true);
-    const { error: verifyError } = await neonCall(() => authClient.emailOtp.verifyEmail({ email, otp }));
-    if (verifyError) {
+    const { error: codeError } =
+      purpose === "sign-in"
+        ? await neonCall(() => authClient.signIn.emailOtp({ email, otp }))
+        : await neonCall(() => authClient.emailOtp.verifyEmail({ email, otp }));
+    if (codeError) {
       setSubmitting(false);
-      setOtpError(neonErrorMessage(verifyError, "That code didn't work."));
+      setOtpError(neonErrorMessage(codeError, "That code didn't work."));
       return;
     }
     try {
@@ -110,8 +119,8 @@ export default function VerifyEmailStep({
         />
         {info && !error && <FormAlert tone="info">{info}</FormAlert>}
         {error && <FormAlert>{error}</FormAlert>}
-        <SubmitButton loading={submitting} loadingLabel="Verifying" disabled={otp.length !== 6}>
-          Verify email
+        <SubmitButton loading={submitting} loadingLabel="Checking code" disabled={otp.length !== 6}>
+          {submitLabel}
         </SubmitButton>
       </form>
 

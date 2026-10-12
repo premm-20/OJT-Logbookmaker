@@ -27,6 +27,8 @@ import {
   KeyRound,
 } from "lucide-react";
 import { LoginSession, UserSummary } from "@/lib/login-tracker";
+import type { AdminStudentProfile } from "@/app/api/admin/profiles/route";
+import AdminStudentProfiles, { studentProfilesToCsv } from "@/components/admin-student-profiles";
 
 export default function AdminPage() {
   // Authentication states
@@ -43,6 +45,7 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [sessions, setSessions] = useState<LoginSession[]>([]);
   const [users, setUsers] = useState<UserSummary[]>([]);
+  const [students, setStudents] = useState<AdminStudentProfile[]>([]);
   const [stats, setStats] = useState({
     totalUsers: 0,
     totalLogins: 0,
@@ -51,7 +54,7 @@ export default function AdminPage() {
   });
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeTab, setActiveTab] = useState<"sessions" | "users">("sessions");
+  const [activeTab, setActiveTab] = useState<"profiles" | "sessions" | "users">("profiles");
 
   // Fetch admin audit data
   async function fetchData(isRefresh = false) {
@@ -60,7 +63,7 @@ export default function AdminPage() {
     setError(null);
 
     try {
-      const res = await fetch("/api/admin/users");
+      const [res, profilesRes] = await Promise.all([fetch("/api/admin/users"), fetch("/api/admin/profiles")]);
 
       if (res.status === 401) {
         setIsAuthenticated(false);
@@ -75,6 +78,10 @@ export default function AdminPage() {
       }
 
       setIsAuthenticated(true);
+      if (profilesRes.ok) {
+        const profilesData = await profilesRes.json();
+        setStudents(profilesData.students || []);
+      }
       setSessions(data.sessions || []);
       setUsers(data.users || []);
       setStats(
@@ -140,6 +147,7 @@ export default function AdminPage() {
     setIsAuthenticated(false);
     setSessions([]);
     setUsers([]);
+    setStudents([]);
   }
 
   // Filtered lists based on search
@@ -167,8 +175,38 @@ export default function AdminPage() {
     );
   }, [users, searchQuery]);
 
-  // Export login records to CSV
+  const filteredStudents = useMemo(() => {
+    if (!searchQuery.trim()) return students;
+    const q = searchQuery.toLowerCase().trim();
+    return students.filter((st) =>
+      [
+        st.name,
+        st.email,
+        st.mobile,
+        st.profile?.learnerName,
+        st.profile?.registrationNumber,
+        st.profile?.programName,
+        st.profile?.industryPartner,
+        st.profile?.supervisorName,
+      ].some((v) => (v || "").toLowerCase().includes(q))
+    );
+  }, [students, searchQuery]);
+
+  // Export the active tab to CSV
   function handleExportCSV() {
+    if (activeTab === "profiles") {
+      if (filteredStudents.length === 0) return;
+      const blob = new Blob([studentProfilesToCsv(filteredStudents)], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `student_profiles_${new Date().toISOString().split("T")[0]}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      return;
+    }
     if (sessions.length === 0) return;
 
     const headers = [
@@ -409,7 +447,7 @@ export default function AdminPage() {
             </button>
             <button
               onClick={handleExportCSV}
-              disabled={sessions.length === 0}
+              disabled={activeTab === "profiles" ? filteredStudents.length === 0 : sessions.length === 0}
               className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-primary-500/25 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Download className="w-3.5 h-3.5" />
@@ -521,7 +559,17 @@ export default function AdminPage() {
       <div className="bg-white rounded-3xl border border-surface-200 shadow-sm overflow-hidden">
         <div className="p-4 sm:p-5 border-b border-surface-200 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-surface-50/50">
           {/* Tabs */}
-          <div className="flex items-center gap-2 bg-surface-200/70 p-1 rounded-2xl">
+          <div className="flex flex-wrap items-center gap-2 bg-surface-200/70 p-1 rounded-2xl">
+            <button
+              onClick={() => setActiveTab("profiles")}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "profiles"
+                  ? "bg-white text-surface-900 shadow-sm"
+                  : "text-surface-600 hover:text-surface-900"
+              }`}
+            >
+              Student Profiles ({filteredStudents.length})
+            </button>
             <button
               onClick={() => setActiveTab("sessions")}
               className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
@@ -551,11 +599,16 @@ export default function AdminPage() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by name, email, mobile..."
+              placeholder="Search name, email, reg. no., program..."
               className="w-full pl-10 pr-4 py-2 rounded-xl border border-surface-200 bg-white text-xs font-medium text-surface-900 focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
             />
           </div>
         </div>
+
+        {/* Tab 0: Student profiles (everything students saved) */}
+        {activeTab === "profiles" && (
+          <AdminStudentProfiles students={filteredStudents} formatDateTime={formatDateTime} />
+        )}
 
         {/* Tab 1: Login Activity Log */}
         {activeTab === "sessions" && (

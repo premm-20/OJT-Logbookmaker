@@ -2,7 +2,7 @@ import { cache } from "react";
 import { NextResponse } from "next/server";
 import { auth } from "./server";
 import { isUniversityEmail } from "./config";
-import { findUserForNeonUser, toSessionUser } from "./users";
+import { getOrCreateUserForNeonUser, toSessionUser } from "./users";
 
 export interface SessionUser {
   id: string;
@@ -24,7 +24,6 @@ export type AuthState =
   | { status: "signed-out" }
   | { status: "wrong-domain"; neonUser: NeonUser }
   | { status: "unverified"; neonUser: NeonUser }
-  | { status: "needs-mobile"; neonUser: NeonUser }
   | { status: "ready"; user: SessionUser; neonUser: NeonUser; sessionId: string };
 
 /**
@@ -47,9 +46,8 @@ export const getAuthState = cache(async (): Promise<AuthState> => {
   if (!isUniversityEmail(neonUser.email)) return { status: "wrong-domain", neonUser };
   if (!neonUser.emailVerified) return { status: "unverified", neonUser };
 
-  const account = await findUserForNeonUser(neonUser);
-  if (!account) return { status: "needs-mobile", neonUser };
-
+  // First sign in (Google or email code) creates the logbook account.
+  const account = await getOrCreateUserForNeonUser(neonUser);
   return { status: "ready", user: toSessionUser(account), neonUser, sessionId: data.session.id };
 });
 

@@ -86,26 +86,3 @@ export function absoluteUrl(path: string): string {
 export function goTo(path: string): void {
   window.location.assign(path);
 }
-
-const PENDING_MOBILE_KEY = "ojt_pending_mobile";
-
-/** Remembers the mobile typed at sign up in case onboarding has to finish later. */
-export const pendingMobile = {
-  set(mobile: string) {
-    try {
-      sessionStorage.setItem(PENDING_MOBILE_KEY, mobile);
-    } catch {}
-  },
-  get(): string {
-    try {
-      return sessionStorage.getItem(PENDING_MOBILE_KEY) || "";
-    } catch {
-      return "";
-    }
-  },
-  clear() {
-    try {
-      sessionStorage.removeItem(PENDING_MOBILE_KEY);
-    } catch {}
-  },
-};

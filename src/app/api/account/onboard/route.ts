@@ -1,41 +1,35 @@
 import { NextResponse } from "next/server";
-import { normalizeMobile } from "@/lib/auth/config";
-import { getAuthState } from "@/lib/auth/session";
-import { AuthError, createUserForNeonUser, toSessionUser } from "@/lib/auth/users";
+import { auth } from "@/lib/auth/server";
+import { isUniversityEmail } from "@/lib/auth/config";
+import { getOrCreateUserForNeonUser, toSessionUser } from "@/lib/auth/users";
 
 /**
- * One-time step after a student's first Neon sign in (email or Google):
- * attach a mobile number and create their logbook account.
+ * Called right after creating an account with an email code: saves the
+ * student's full name on their logbook account (creating it if needed).
  */
 export async function POST(request: Request) {
   try {
-    const state = await getAuthState();
-    if (state.status === "signed-out") {
-      return NextResponse.json({ error: "Please sign in to continue." }, { status: 401 });
-    }
-    if (state.status === "ready") {
-      return NextResponse.json({ user: state.user });
-    }
-    if (state.status === "wrong-domain") {
+    const { data } = await auth.getSession();
+    const user = data?.user;
+    if (!user) return NextResponse.json({ error: "Please sign in to continue." }, { status: 401 });
+
+    const email = user.email.trim().toLowerCase();
+    if (!isUniversityEmail(email)) {
       return NextResponse.json({ error: "Only university accounts can use the logbook." }, { status: 403 });
     }
-    if (state.status === "unverified") {
+    if (!user.emailVerified) {
       return NextResponse.json({ error: "Verify your email first." }, { status: 403 });
     }
 
     const body = await request.json().catch(() => ({}));
-    const mobile = normalizeMobile(body.mobile);
-    if (mobile.length !== 10) {
-      return NextResponse.json({ error: "Mobile number must be 10 digits." }, { status: 400 });
-    }
     const name = typeof body.name === "string" ? body.name.trim().replace(/\s+/g, " ").slice(0, 80) : "";
 
-    const account = await createUserForNeonUser(state.neonUser, mobile, name || undefined);
+    const account = await getOrCreateUserForNeonUser(
+      { id: user.id, name: user.name || "", email, image: user.image ?? null, emailVerified: true },
+      name || undefined
+    );
     return NextResponse.json({ user: toSessionUser(account) });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: err.message }, { status: err.status });
-    }
     console.error("[account/onboard]", err);
     return NextResponse.json({ error: "Couldn't finish setting up your account." }, { status: 500 });
   }

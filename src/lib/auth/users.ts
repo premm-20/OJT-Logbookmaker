@@ -3,14 +3,14 @@ import type { NeonUser, SessionUser } from "./session";
 
 /**
  * `app_users` links a Neon Auth user to the logbook account its data lives
- * under. IDs stay `usr_<mobile>` so students who used the earlier portal keep
- * their existing entries, profile and feedback rows.
+ * under. Students are matched by their verified university email, so data
+ * saved under an older account ID (e.g. `usr_<mobile>`) stays attached.
  */
 export interface UserRecord {
   id: string;
   name: string;
   email: string;
-  mobile: string;
+  mobile: string | null;
   avatar_url: string | null;
   neon_user_id: string | null;
 }
@@ -33,15 +33,16 @@ export function ensureUsersTable(): Promise<void> {
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
           email TEXT NOT NULL UNIQUE,
-          mobile TEXT NOT NULL UNIQUE,
+          mobile TEXT UNIQUE,
           avatar_url TEXT,
           neon_user_id TEXT UNIQUE,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           last_login_at TIMESTAMPTZ
         );
       `;
-      // Tables created by the earlier self-hosted auth lack this column.
+      // Upgrades for tables created by earlier versions of the app.
       await sql`ALTER TABLE app_users ADD COLUMN IF NOT EXISTS neon_user_id TEXT UNIQUE`;
+      await sql`ALTER TABLE app_users ALTER COLUMN mobile DROP NOT NULL`;
     })().catch((err) => {
       tableReady = null;
       throw err;
@@ -50,16 +51,12 @@ export function ensureUsersTable(): Promise<void> {
   return tableReady;
 }
 
-export function userIdForMobile(mobile: string): string {
-  return `usr_${mobile}`;
-}
-
 export function toSessionUser(user: UserRecord): SessionUser {
   return {
     id: user.id,
     name: user.name,
     email: user.email,
-    mobile: user.mobile,
+    mobile: user.mobile ?? "",
     avatarUrl: user.avatar_url,
   };
 }
@@ -73,85 +70,79 @@ async function selectOne(where: string, value: string): Promise<UserRecord | nul
 }
 
 /**
- * Finds the account for a verified Neon user. An account created before
- * Neon Auth (same university email) is linked on first sign in; Neon has
- * already verified the email, so the link is safe.
+ * Finds the account for a verified Neon user: by Neon ID, otherwise by email.
+ * The same student may reach Neon through Google and through an email code
+ * (two Neon identities); both resolve to one logbook account by email.
  */
 export async function findUserForNeonUser(neonUser: NeonUser): Promise<UserRecord | null> {
   const linked = await selectOne("neon_user_id", neonUser.id);
   if (linked) return linked;
 
   const byEmail = await selectOne("email", neonUser.email);
-  if (!byEmail || byEmail.neon_user_id) return null;
-
-  const rows = await getDb()`
-    UPDATE app_users
-    SET neon_user_id = ${neonUser.id}, avatar_url = COALESCE(avatar_url, ${neonUser.image})
-    WHERE id = ${byEmail.id} AND neon_user_id IS NULL
-    RETURNING id, name, email, mobile, avatar_url, neon_user_id
-  `;
-  return (rows[0] as unknown as UserRecord) ?? null;
+  if (!byEmail) return null;
+  if (!byEmail.neon_user_id) {
+    await getDb()`
+      UPDATE app_users
+      SET neon_user_id = ${neonUser.id}, avatar_url = COALESCE(avatar_url, ${neonUser.image})
+      WHERE id = ${byEmail.id} AND neon_user_id IS NULL
+    `;
+  }
+  return byEmail;
 }
 
 /**
- * Before accounts existed, anyone could sign in as `usr_<mobile>`. If that ID
- * already holds a profile or login history under a different email, refuse
- * to hand it to a new account.
+ * The account ID to use for a new student. If the old portal already saved a
+ * profile or logins under this email, reuse that ID so the data stays theirs.
  */
-async function assertLegacyDataBelongsTo(userId: string, email: string): Promise<void> {
+async function idForNewStudent(neonUser: NeonUser): Promise<string> {
   const sql = getDb();
-  let ownerEmail = "";
   try {
-    const profile = await sql`SELECT email_id FROM user_profiles WHERE user_id = ${userId} LIMIT 1`;
-    ownerEmail = String(profile[0]?.email_id || "").trim().toLowerCase();
-    if (!ownerEmail) {
-      const firstLogin = await sql`
-        SELECT email FROM user_logins WHERE user_id = ${userId} ORDER BY login_at ASC LIMIT 1
-      `;
-      ownerEmail = String(firstLogin[0]?.email || "").trim().toLowerCase();
-    }
+    const profile = await sql`
+      SELECT user_id FROM user_profiles WHERE lower(email_id) = ${neonUser.email} LIMIT 1
+    `;
+    const fromProfile = String(profile[0]?.user_id || "");
+    if (fromProfile && !(await selectOne("id", fromProfile))) return fromProfile;
+
+    const login = await sql`
+      SELECT user_id FROM user_logins WHERE lower(email) = ${neonUser.email} ORDER BY login_at ASC LIMIT 1
+    `;
+    const fromLogin = String(login[0]?.user_id || "");
+    if (fromLogin && !(await selectOne("id", fromLogin))) return fromLogin;
   } catch (err) {
-    console.warn("[auth] Legacy ownership lookup skipped:", err);
-    return;
+    console.warn("[auth] Legacy account lookup skipped:", err);
   }
-  if (ownerEmail && ownerEmail !== email) {
-    throw new AuthError(
-      "This mobile number is already linked to another student's logbook. Use your own number, or contact your coordinator.",
-      409
-    );
-  }
+  return `usr_${neonUser.id}`;
 }
 
-/** Checks a mobile number can be used for this email. Throws AuthError if not. */
-export async function assertMobileAvailable(email: string, mobile: string): Promise<void> {
-  const existing = await selectOne("mobile", mobile);
-  if (existing && existing.email !== email) {
-    throw new AuthError("This mobile number is already registered to another account.", 409);
-  }
-  await assertLegacyDataBelongsTo(userIdForMobile(mobile), email);
-}
-
-/** Creates the logbook account for a verified Neon user (one-time onboarding). */
-export async function createUserForNeonUser(neonUser: NeonUser, mobile: string, name?: string): Promise<UserRecord> {
+/**
+ * Returns the student's account, creating it on first sign in. Safe to call
+ * repeatedly and concurrently.
+ */
+export async function getOrCreateUserForNeonUser(neonUser: NeonUser, name?: string): Promise<UserRecord> {
   const existing = await findUserForNeonUser(neonUser);
-  if (existing) return existing;
-
-  if (await selectOne("email", neonUser.email)) {
-    throw new AuthError("This email is already linked to another sign-in. Contact your coordinator.", 409);
+  if (existing) {
+    const cleanName = name?.trim();
+    if (cleanName && cleanName !== existing.name) {
+      await getDb()`UPDATE app_users SET name = ${cleanName} WHERE id = ${existing.id}`;
+      return { ...existing, name: cleanName };
+    }
+    return existing;
   }
-  await assertMobileAvailable(neonUser.email, mobile);
 
+  const id = await idForNewStudent(neonUser);
+  const displayName = name?.trim() || neonUser.name || neonUser.email.split("@")[0];
   try {
     const rows = await getDb()`
-      INSERT INTO app_users (id, name, email, mobile, avatar_url, neon_user_id, last_login_at)
-      VALUES (${userIdForMobile(mobile)}, ${name || neonUser.name}, ${neonUser.email}, ${mobile},
-              ${neonUser.image}, ${neonUser.id}, NOW())
+      INSERT INTO app_users (id, name, email, avatar_url, neon_user_id, last_login_at)
+      VALUES (${id}, ${displayName}, ${neonUser.email}, ${neonUser.image}, ${neonUser.id}, NOW())
       RETURNING id, name, email, mobile, avatar_url, neon_user_id
     `;
     return rows[0] as unknown as UserRecord;
   } catch (err) {
+    // Another request created it at the same moment.
     if ((err as { code?: string })?.code === "23505") {
-      throw new AuthError("This mobile number is already registered to another account.", 409);
+      const raced = await findUserForNeonUser(neonUser);
+      if (raced) return raced;
     }
     throw err;
   }
