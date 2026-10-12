@@ -7,7 +7,7 @@ import { isUniversityEmail, normalizeEmail, UNIVERSITY_DOMAIN_LABEL } from "@/li
 import { cn } from "@/lib/utils";
 import { Field, FormAlert, SubmitButton } from "@/components/auth/fields";
 import VerifyEmailStep from "@/components/auth/verify-email-step";
-import { goTo, neonCall, neonErrorMessage, postJson } from "@/components/auth/auth-client";
+import { goTo, neonCall, postJson } from "@/components/auth/auth-client";
 
 const EMAIL_HINT = `Use your ${UNIVERSITY_DOMAIN_LABEL} email.`;
 
@@ -33,21 +33,13 @@ export default function SignupPage() {
 
     setSubmitting(true);
     const check = await postJson("/api/account/check", { email: cleanEmail });
+    setSubmitting(false);
     if (!check.ok) {
-      setSubmitting(false);
       if (check.data.field === "email") setFieldErrors({ email: check.data.error });
       else setError(check.data.error || "Couldn't check your email.");
       return;
     }
-
-    const { error: sendError } = await neonCall(() =>
-      authClient.emailOtp.sendVerificationOtp({ email: cleanEmail, type: "sign-in" })
-    );
-    setSubmitting(false);
-    if (sendError) {
-      setError(neonErrorMessage(sendError, "Couldn't send the code."));
-      return;
-    }
+    // Show the code screen straight away; it sends the email as it opens.
     setStep("code");
   }
 
@@ -67,7 +59,7 @@ export default function SignupPage() {
           key="code"
           email={cleanEmail}
           purpose="sign-in"
-          sendOnMount={false}
+          sendOnMount
           submitLabel="Create account"
           onVerified={finishSignup}
           onBack={() => setStep("details")}

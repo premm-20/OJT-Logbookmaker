@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
-import { normalizeEmail } from "@/lib/auth/config";
-import { verifyUniversityEmail } from "@/lib/email-verifier";
+import { isUniversityEmail, normalizeEmail, UNIVERSITY_DOMAIN_LABEL } from "@/lib/auth/config";
 import { rateLimit, tooManyAttemptsMessage } from "@/lib/auth/rate-limit";
 import { clientIp } from "@/lib/auth/session";
 
 /**
- * Checks a sign-up email before a code is sent: only Medhavi Skills
- * University addresses with a working mail domain are accepted.
+ * Checks a sign-up email before a code is sent. Only the university's exact
+ * domains are accepted, so a format check is enough (no slow DNS lookup).
  */
 export async function POST(request: Request) {
   try {
@@ -17,10 +16,9 @@ export async function POST(request: Request) {
 
     const body = await request.json().catch(() => ({}));
     const email = normalizeEmail(body.email);
-    const emailCheck = await verifyUniversityEmail(email);
-    if (!emailCheck.valid) {
+    if (!isUniversityEmail(email)) {
       return NextResponse.json(
-        { error: emailCheck.error || "Use your university email address.", field: "email" },
+        { error: `Use your ${UNIVERSITY_DOMAIN_LABEL} email.`, field: "email" },
         { status: 400 }
       );
     }
