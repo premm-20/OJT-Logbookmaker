@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { AiBusyError, generateWithPool, hasAiKeys } from "@/lib/ai";
 import { NextResponse } from "next/server";
 import { getSession, unauthorized } from "@/lib/auth/session";
 import type { ExtractedDayEntry } from "@/lib/types";
@@ -115,56 +115,6 @@ Return ONLY a valid JSON array — no markdown fences, no explanatory text:
     "specialAchievements": ["Successfully configured development environment and validated initial codebase build."]
   }
 ]`;
-}
-
-// ─────────────────────────────────────────────────────────────
-// Call Gemini
-// ─────────────────────────────────────────────────────────────
-async function generateWithGemini(
-  prompt: string,
-  geminiKey: string
-): Promise<ExtractedDayEntry[]> {
-  const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-  const genAI = new GoogleGenerativeAI(geminiKey);
-  const model = genAI.getGenerativeModel({
-    model: modelName,
-    generationConfig: { responseMimeType: "application/json", temperature: 0.7 },
-  });
-
-  const result = await model.generateContent(prompt);
-  const text = result.response.text();
-  const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-  return parseAIResponse(cleaned);
-}
-
-// ─────────────────────────────────────────────────────────────
-// Call OpenRouter as fallback
-// ─────────────────────────────────────────────────────────────
-async function generateWithOpenRouter(
-  prompt: string,
-  openrouterKey: string
-): Promise<ExtractedDayEntry[]> {
-  const model = process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash";
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${openrouterKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "http://localhost:3000",
-      "X-Title": "OJT Logbook Maker",
-    },
-    body: JSON.stringify({
-      model,
-      temperature: 0.7,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-
-  if (!response.ok) throw new Error(`OpenRouter error: ${response.statusText}`);
-  const json = await response.json();
-  const text = json.choices?.[0]?.message?.content || "";
-  const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-  return parseAIResponse(cleaned);
 }
 
 function parseAIResponse(cleaned: string): ExtractedDayEntry[] {
@@ -293,31 +243,17 @@ export async function POST(req: Request) {
       );
     }
 
-    const geminiKey = process.env.GEMINI_API_KEY;
-    const openrouterKey = process.env.OPENROUTER_API_KEY;
-    const prompt = buildGenerationPrompt(prdText, workingDays, department, designation);
-
-    let days: ExtractedDayEntry[] = [];
-
-    if (geminiKey) {
-      try {
-        days = await generateWithGemini(prompt, geminiKey);
-      } catch (err) {
-        console.warn("Gemini failed, trying OpenRouter:", err);
-        if (openrouterKey) {
-          days = await generateWithOpenRouter(prompt, openrouterKey);
-        } else {
-          throw err;
-        }
-      }
-    } else if (openrouterKey) {
-      days = await generateWithOpenRouter(prompt, openrouterKey);
-    } else {
+    if (!hasAiKeys()) {
       return NextResponse.json(
         { success: false, error: "No AI API key configured." },
         { status: 500 }
       );
     }
+    const prompt = buildGenerationPrompt(prdText, workingDays, department, designation);
+    let days = await generateWithPool(
+      { prompt, temperature: 0.7, json: true, label: "generate-from-prd" },
+      parseAIResponse
+    );
 
     // Normalise times and dept from request
     days = days.map((d, i) => ({
@@ -339,6 +275,12 @@ export async function POST(req: Request) {
       validationWarnings: [],
     });
   } catch (error: unknown) {
+    if (error instanceof AiBusyError) {
+      return NextResponse.json(
+        { success: false, error: error.message, retryAfterSeconds: error.retryAfterSeconds },
+        { status: 503 }
+      );
+    }
     console.error("generate-from-prd error:", error);
     return NextResponse.json(
       {

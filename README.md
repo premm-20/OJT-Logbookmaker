@@ -57,7 +57,8 @@ AUTH_SECRET=long_random_string               # signs the admin token
 ADMIN_USERNAME=your_admin_id
 ADMIN_PASSWORD=long_unique_password
 DATABASE_URL=postgresql://user:password@ep-xyz.neon.tech/neondb?sslmode=require
-GEMINI_API_KEY=your_gemini_api_key
+GEMINI_API_KEYS=key_one,key_two           # one or more, comma separated
+OPENROUTER_API_KEYS=key_one                 # optional backup pool
 ```
 
 `ADMIN_USERNAME` and `ADMIN_PASSWORD` are the credentials for the admin portal at `/admin`.
@@ -229,11 +230,20 @@ CREATE POLICY "Users can delete own feedback"
    - Set your Site URL (e.g., `http://localhost:3000`)
    - Add `http://localhost:3000/auth/callback` to Redirect URLs
 
-### 4. Get a Gemini API Key
+### 4. Get AI API Keys
 
-1. Go to [Google AI Studio](https://aistudio.google.com/app/apikey)
-2. Create an API key
-3. Add it to your `.env.local` as `GEMINI_API_KEY`
+The app spreads AI requests across a pool of keys (`src/lib/ai.ts`). Every
+request starts on a different key; when a key hits its rate limit it rests
+and the next key takes over. Gemini keys are tried first, then OpenRouter.
+
+1. Gemini: create keys at [Google AI Studio](https://aistudio.google.com/app/apikey).
+   Free quota is per Google Cloud project, so create each key in its own project.
+2. OpenRouter (optional backup): create a key at [openrouter.ai/keys](https://openrouter.ai/keys).
+   Models ending in `:free` cost nothing; the account allows 50 free requests a day,
+   or 1000 a day after a one-time $10 credit purchase.
+3. Add them to `.env.local` (and Vercel) as comma-separated lists:
+   `GEMINI_API_KEYS`, `OPENROUTER_API_KEYS`, and optionally `GEMINI_MODELS` /
+   `OPENROUTER_MODELS`. The old single-key names still work.
 
 ### 5. Run the Dev Server
 

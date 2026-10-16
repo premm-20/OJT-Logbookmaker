@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { generateWithPool, hasAiKeys } from "@/lib/ai";
 import { NextResponse } from "next/server";
 import { getSession, unauthorized } from "@/lib/auth/session";
 import { formatTime, ensureSpecialAchievements } from "@/lib/utils";
@@ -408,87 +408,40 @@ function fallbackHeuristicClassification(chunk: string): ExtractedLogbook {
   };
 }
 
-async function callAI(text: string, geminiKey?: string, openrouterKey?: string): Promise<ExtractedLogbook> {
+async function callAI(text: string): Promise<ExtractedLogbook> {
   // First check if structured headers exist!
   const structured = parseStructuredSections(text);
   if (structured) {
     return structured;
   }
 
-  // 1. Try Gemini
-  if (geminiKey) {
+  if (hasAiKeys()) {
     try {
-      const modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-      const genAI = new GoogleGenerativeAI(geminiKey);
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.1,
-        },
-        systemInstruction: SYSTEM_PROMPT,
-      });
+      return await generateWithPool(
+        {
+          system: SYSTEM_PROMPT,
+          prompt: `Classify the following OJT log text into the appropriate categories. Extract and classify ONLY — do not rewrite, paraphrase, or generate new text.
 
-      const result = await model.generateContent(
-        `Classify the following OJT log text into the appropriate categories. Extract and classify ONLY — do not rewrite, paraphrase, or generate new text.\n\n---\n${text}\n---`
+---
+${text}
+---`,
+          temperature: 0.1,
+          json: true,
+          label: "extract-logbook",
+        },
+        (cleaned) => {
+          const parsed = JSON.parse(cleaned);
+          return {
+            mySpace: ensureStringArray(parsed.mySpace),
+            tasksCarriedOutToday: ensureStringArray(parsed.tasksCarriedOutToday),
+            keyLearningObservations: ensureStringArray(parsed.keyLearningObservations),
+            toolsTechnologyUsed: ensureStringArray(parsed.toolsTechnologyUsed),
+            specialAchievements: ensureStringArray(parsed.specialAchievements),
+          };
+        }
       );
-      const responseText = result.response.text();
-      const cleaned = responseText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-      const parsed = JSON.parse(cleaned);
-
-      return {
-        mySpace: ensureStringArray(parsed.mySpace),
-        tasksCarriedOutToday: ensureStringArray(parsed.tasksCarriedOutToday),
-        keyLearningObservations: ensureStringArray(parsed.keyLearningObservations),
-        toolsTechnologyUsed: ensureStringArray(parsed.toolsTechnologyUsed),
-        specialAchievements: ensureStringArray(parsed.specialAchievements),
-      };
-    } catch (err: any) {
-      console.warn("Gemini API call failed, falling back to OpenRouter/heuristics:", err.message);
-    }
-  }
-
-  // 2. Try OpenRouter
-  if (openrouterKey) {
-    try {
-      const model = process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash";
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${openrouterKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "http://localhost:3000",
-          "X-Title": "OJT Logbook Maker",
-        },
-        body: JSON.stringify({
-          model,
-          temperature: 0.1,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            {
-              role: "user",
-              content: `Classify the following OJT log text into the appropriate categories. Extract and classify ONLY — do not rewrite, paraphrase, or generate new text.\n\n---\n${text}\n---`,
-            },
-          ],
-        }),
-      });
-
-      if (response.ok) {
-        const json = await response.json();
-        const responseText = json.choices?.[0]?.message?.content || "";
-        const cleaned = responseText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-        const parsed = JSON.parse(cleaned);
-
-        return {
-          mySpace: ensureStringArray(parsed.mySpace),
-          tasksCarriedOutToday: ensureStringArray(parsed.tasksCarriedOutToday),
-          keyLearningObservations: ensureStringArray(parsed.keyLearningObservations),
-          toolsTechnologyUsed: ensureStringArray(parsed.toolsTechnologyUsed),
-          specialAchievements: ensureStringArray(parsed.specialAchievements),
-        };
-      }
-    } catch (err: any) {
-      console.warn("OpenRouter API call failed:", err.message);
+    } catch (err) {
+      console.warn("AI classification failed, using heuristics:", err instanceof Error ? err.message : err);
     }
   }
 
@@ -510,9 +463,6 @@ export async function POST(req: Request) {
       );
     }
 
-    const openrouterKey = process.env.OPENROUTER_API_KEY;
-    const geminiKey = process.env.GEMINI_API_KEY;
-
     // Split text into distinct pages using the multi-page section boundary detector
     const dayChunks = splitIntoDayPages(text);
     const resolvedDayNumbers = resolveDayNumbers(dayChunks);
@@ -528,7 +478,7 @@ export async function POST(req: Request) {
       const meta = extractMetadataFromChunk(chunk, defaultDayNum);
 
       try {
-        const classified = await callAI(chunk, geminiKey, openrouterKey);
+        const classified = await callAI(chunk);
 
         // Validate text fragments exist in chunk
         const normalizedChunk = chunk.replace(/\s+/g, " ").trim().toLowerCase();
