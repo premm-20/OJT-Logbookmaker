@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import { PDFDocument } from "pdf-lib";
 import type { PDFDocumentProxy } from "pdfjs-dist";
@@ -46,6 +47,20 @@ interface PageItem {
   id: string;
   /** Index of the page in the working document. */
   src: number;
+  /** A full-page image the student added. */
+  image?: boolean;
+}
+
+/** Pages of Section 2 (Supervisor's feedback), found by their heading. */
+async function findSectionTwoPages(doc: PDFDocumentProxy): Promise<Set<number>> {
+  const found = new Set<number>();
+  for (let n = 1; n <= doc.numPages; n++) {
+    const page = await doc.getPage(n);
+    const content = await page.getTextContent();
+    const text = content.items.map((item) => ("str" in item ? item.str : "")).join(" ");
+    if (/SUPERVISOR.{0,3}S\s+FEEDBACK/i.test(text)) found.add(n - 1);
+  }
+  return found;
 }
 
 const THUMB_WIDTH = 150;
@@ -83,6 +98,9 @@ function PdfEditor() {
   const [previewVersion, setPreviewVersion] = useState(0);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [showImageDialog, setShowImageDialog] = useState(false);
+  // Source page indexes of Section 2; images are added after it.
+  const sectionTwoRef = useRef<Set<number>>(new Set());
+  const [hasSectionTwo, setHasSectionTwo] = useState(false);
   const [savedCount, setSavedCount] = useState<number | null>(null);
   // undefined while checking, null when the student has no saved edit.
   const [editedInfo, setEditedInfo] = useState<EditedPdfInfo | null | undefined>(undefined);
@@ -109,6 +127,15 @@ function PdfEditor() {
       libDocRef.current = libDoc;
       renderDocRef.current = rendered;
       originalRef.current = { bytes, name, source: from };
+      sectionTwoRef.current = new Set();
+      setHasSectionTwo(false);
+      void findSectionTwoPages(rendered)
+        .then((found) => {
+          if (libDocRef.current !== libDoc) return; // another PDF was opened meanwhile
+          sectionTwoRef.current = found;
+          setHasSectionTwo(found.size > 0);
+        })
+        .catch(() => {});
       setRenderDoc((prev) => {
         void prev?.loadingTask.destroy();
         return rendered;
@@ -312,37 +339,26 @@ function PdfEditor() {
   }
 
   // ── Add image ─────────────────────────────────────────────────
-  async function addImage(file: File, mode: "new-page" | "stamp", position: StampPosition) {
+  /** Adds each image as a full A4 page after Section 2 (or at the end). */
+  async function addImages(files: File[]) {
     const libDoc = libDocRef.current;
-    if (!libDoc || !activePage) return;
-    setBusy("Adding your image...");
+    if (!libDoc || files.length === 0) return;
+    setBusy(files.length === 1 ? "Adding your image..." : `Adding ${files.length} images...`);
     try {
-      const image = await normalizeImageForPdf(file);
-      const embedded = image.kind === "png" ? await libDoc.embedPng(image.bytes) : await libDoc.embedJpg(image.bytes);
-      let insertedItem: PageItem | null = null;
-
-      if (mode === "new-page") {
+      const added: PageItem[] = [];
+      for (const file of files) {
+        const image = await normalizeImageForPdf(file);
+        const embedded = image.kind === "png" ? await libDoc.embedPng(image.bytes) : await libDoc.embedJpg(image.bytes);
+        // Appended to the working document, so existing page indexes stay valid.
         const page = libDoc.addPage(A4);
         const margin = 36;
         const dims = embedded.scaleToFit(A4[0] - margin * 2, A4[1] - margin * 2);
         page.drawImage(embedded, { x: (A4[0] - dims.width) / 2, y: (A4[1] - dims.height) / 2, ...dims });
-        insertedItem = { id: newId(), src: libDoc.getPageCount() - 1 };
-      } else {
-        const page = libDoc.getPage(activePage.src);
-        const { width, height } = page.getSize();
-        const dims = embedded.scaleToFit(width * 0.42, height * 0.3);
-        const pad = 28;
-        const spots: Record<StampPosition, { x: number; y: number }> = {
-          center: { x: (width - dims.width) / 2, y: (height - dims.height) / 2 },
-          top: { x: (width - dims.width) / 2, y: height - dims.height - pad },
-          bottom: { x: (width - dims.width) / 2, y: pad },
-          "bottom-right": { x: width - dims.width - pad, y: pad },
-        };
-        page.drawImage(embedded, { ...spots[position], ...dims });
+        added.push({ id: newId(), src: libDoc.getPageCount() - 1, image: true });
       }
 
-      // Re-render from the edited document. Point the thumbnail renderer at it
-      // before dropping the stamped page's old thumbnail.
+      // Re-render from the edited document before the new tiles appear, so
+      // their thumbnails render from a document that contains them.
       const bytes = await libDoc.save();
       const rendered = await loadPdfForRendering(bytes);
       renderDocRef.current = rendered;
@@ -350,31 +366,25 @@ function PdfEditor() {
         void prev?.loadingTask.destroy();
         return rendered;
       });
-      // Add the new tile only now, so its thumbnail renders from a document
-      // that contains the page.
-      if (insertedItem) {
-        const item = insertedItem;
-        setPages((items) => {
-          const at = items.findIndex((p) => p.id === activePage.id) + 1;
-          return [...items.slice(0, at), item, ...items.slice(at)];
-        });
-        setActiveId(item.id);
-      }
-      if (mode === "stamp") {
-        const stale = activePage.src;
-        setThumbs((prev) => {
-          const next = { ...prev };
-          delete next[stale];
-          thumbsRef.current = next;
-          return next;
-        });
-      }
+
+      const sectionTwo = sectionTwoRef.current;
+      setPages((items) => {
+        let at = items.length;
+        const lastSectionTwo = items.findLastIndex((p) => sectionTwo.has(p.src));
+        if (lastSectionTwo >= 0) {
+          at = lastSectionTwo + 1;
+          while (at < items.length && items[at].image) at++; // after images added earlier
+        }
+        return [...items.slice(0, at), ...added, ...items.slice(at)];
+      });
+      setActiveId(added[0].id);
       setPreviewVersion((v) => v + 1);
       setDirty(true);
       setShowImageDialog(false);
-      flash(mode === "new-page" ? "Image added as a new page." : "Image placed on the page.");
+      const where = sectionTwo.size > 0 ? "after Section 2" : "at the end";
+      flash(files.length === 1 ? `Image added ${where}.` : `${files.length} images added ${where}.`);
     } catch (err) {
-      flash(err instanceof Error ? err.message : "Couldn't add that image.", "error");
+      flash(err instanceof Error ? err.message : "Couldn't add those images.", "error");
     } finally {
       setBusy(null);
     }
@@ -511,7 +521,7 @@ function PdfEditor() {
               className="flex h-10 cursor-pointer items-center gap-2 rounded-xl border border-surface-300 bg-white px-3.5 text-sm font-semibold text-surface-900 hover:bg-surface-50 disabled:opacity-50"
             >
               <ImagePlus className="h-4 w-4 text-primary-700" aria-hidden />
-              Add image
+              Add images
             </button>
             <button
               type="button"
@@ -618,7 +628,11 @@ function PdfEditor() {
                     ))}
                   </div>
                 </SortableContext>
-                <DragOverlay dropAnimation={{ duration: 180, easing: "cubic-bezier(0.16, 1, 0.3, 1)" }}>
+                {/* Rendered on <body>: the page's entrance animation leaves a
+                    transform on its container, which would offset the dragged
+                    copy from the pointer. */}
+                {createPortal(
+                <DragOverlay dropAnimation={{ duration: 220, easing: "cubic-bezier(0.25, 1, 0.5, 1)" }}>
                   {draggingPage ? (
                     <PageTileFace
                       position={pages.findIndex((p) => p.id === draggingPage.id) + 1}
@@ -628,7 +642,9 @@ function PdfEditor() {
                       lifted
                     />
                   ) : null}
-                </DragOverlay>
+                </DragOverlay>,
+                document.body
+                )}
               </DndContext>
             </div>
           </section>
@@ -661,11 +677,11 @@ function PdfEditor() {
         </div>
       )}
 
-      {showImageDialog && activePage && (
+      {showImageDialog && (
         <AddImageDialog
-          pageNumber={activeIndex + 1}
+          placement={hasSectionTwo ? "after Section 2 (Supervisor's feedback)" : "at the end of the PDF"}
           onCancel={() => setShowImageDialog(false)}
-          onApply={addImage}
+          onApply={addImages}
         />
       )}
     </div>
@@ -852,7 +868,11 @@ function SortablePageTile({
   onToggleSelect: () => void;
   onDelete: () => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: page.id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: page.id,
+    // Neighbouring pages glide aside rather than jump.
+    transition: { duration: 260, easing: "cubic-bezier(0.25, 1, 0.5, 1)" },
+  });
   const elementRef = useRef<HTMLDivElement | null>(null);
 
   // Render the thumbnail only once the tile scrolls into view.
@@ -915,28 +935,35 @@ function SortablePageTile({
 
 // ─── Add image dialog ───────────────────────────────────────────
 
-type StampPosition = "center" | "top" | "bottom" | "bottom-right";
-
 function AddImageDialog({
-  pageNumber,
+  placement,
   onCancel,
   onApply,
 }: {
-  pageNumber: number;
+  placement: string;
   onCancel: () => void;
-  onApply: (file: File, mode: "new-page" | "stamp", position: StampPosition) => void;
+  onApply: (files: File[]) => void;
 }) {
-  const [file, setFile] = useState<File | null>(null);
-  const [preview, setPreview] = useState<string | null>(null);
-  const [mode, setMode] = useState<"new-page" | "stamp">("new-page");
-  const [position, setPosition] = useState<StampPosition>("bottom-right");
+  const [picked, setPicked] = useState<{ file: File; url: string }[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
-
+  const pickedRef = useRef(picked);
   useEffect(() => {
-    return () => {
-      if (preview) URL.revokeObjectURL(preview);
-    };
-  }, [preview]);
+    pickedRef.current = picked;
+  }, [picked]);
+  // Free the preview URLs when the dialog closes.
+  useEffect(() => () => pickedRef.current.forEach((p) => URL.revokeObjectURL(p.url)), []);
+
+  function addFiles(files: FileList | null) {
+    const images = Array.from(files || []).filter((f) => f.type.startsWith("image/"));
+    setPicked((prev) => [...prev, ...images.map((file) => ({ file, url: URL.createObjectURL(file) }))]);
+  }
+
+  function remove(index: number) {
+    setPicked((prev) => {
+      URL.revokeObjectURL(prev[index].url);
+      return prev.filter((_, i) => i !== index);
+    });
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-surface-950/40 p-4 backdrop-blur-[2px] animate-fade-in" onClick={onCancel}>
@@ -950,9 +977,9 @@ function AddImageDialog({
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 id="add-image-title" className="text-lg font-semibold tracking-tight text-surface-950">
-              Add an image
+              Add images
             </h2>
-            <p className="mt-1 text-sm text-surface-600">Photos, certificates, signatures or diagrams.</p>
+            <p className="mt-1 text-sm text-surface-600">Each image becomes a full page, added {placement}.</p>
           </div>
           <button type="button" onClick={onCancel} className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-surface-500 hover:bg-surface-100" aria-label="Close">
             <X className="h-5 w-5" />
@@ -963,80 +990,50 @@ function AddImageDialog({
           ref={inputRef}
           type="file"
           accept="image/*"
+          multiple
           className="hidden"
           onChange={(e) => {
-            const picked = e.target.files?.[0] || null;
-            e.target.value = ""; // allow picking the same file again
-            if (!picked) return;
-            setFile(picked);
-            setPreview(URL.createObjectURL(picked));
+            addFiles(e.target.files);
+            e.target.value = ""; // allow picking the same files again
           }}
         />
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
-          className={cn(
-            "mt-5 flex w-full cursor-pointer items-center gap-4 rounded-xl border-2 border-dashed p-4 text-left",
-            file ? "border-primary-300 bg-primary-50/50" : "border-surface-300 hover:border-primary-400"
-          )}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            addFiles(e.dataTransfer.files);
+          }}
+          className="mt-5 flex w-full cursor-pointer items-center gap-4 rounded-xl border-2 border-dashed border-surface-300 p-4 text-left hover:border-primary-400"
         >
-          {preview ? (
-            // eslint-disable-next-line @next/next/no-img-element -- local object URL preview
-            <img src={preview} alt="" className="h-16 w-16 rounded-lg object-cover ring-1 ring-surface-200" />
-          ) : (
-            <span className="flex h-16 w-16 items-center justify-center rounded-lg bg-surface-100 text-surface-500">
-              <ImagePlus className="h-6 w-6" aria-hidden />
-            </span>
-          )}
+          <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-surface-100 text-surface-500">
+            <ImagePlus className="h-6 w-6" aria-hidden />
+          </span>
           <span className="min-w-0">
-            <span className="block truncate text-sm font-semibold text-surface-900">{file ? file.name : "Choose an image"}</span>
-            <span className="block text-[13px] text-surface-600">{file ? `${(file.size / 1024).toFixed(0)} KB. Click to change.` : "PNG, JPG, WebP or GIF"}</span>
+            <span className="block text-sm font-semibold text-surface-900">{picked.length ? "Add more images" : "Choose images"}</span>
+            <span className="block text-[13px] text-surface-600">PNG, JPG, WebP or GIF. Pick several at once or drop them here.</span>
           </span>
         </button>
 
-        <fieldset className="mt-5">
-          <legend className="text-sm font-medium text-surface-800">Where should it go?</legend>
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            {(
-              [
-                ["new-page", "New page", `Full page after page ${pageNumber}`],
-                ["stamp", `On page ${pageNumber}`, "Placed over the page"],
-              ] as const
-            ).map(([value, title, hint]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setMode(value)}
-                aria-pressed={mode === value}
-                className={cn(
-                  "cursor-pointer rounded-xl p-3 text-left ring-1",
-                  mode === value ? "bg-primary-50 ring-2 ring-primary-500" : "ring-surface-200 hover:bg-surface-50"
-                )}
-              >
-                <span className="block text-sm font-semibold text-surface-900">{title}</span>
-                <span className="block text-[13px] text-surface-600">{hint}</span>
-              </button>
+        {picked.length > 0 && (
+          <ul className="mt-4 grid max-h-64 grid-cols-4 gap-2 overflow-y-auto" aria-label="Chosen images">
+            {picked.map((p, i) => (
+              <li key={p.url} className="group relative aspect-[1/1.414] overflow-hidden rounded-lg bg-surface-100 ring-1 ring-surface-200">
+                {/* eslint-disable-next-line @next/next/no-img-element -- local object URL preview */}
+                <img src={p.url} alt={p.file.name} className="h-full w-full object-contain" />
+                <span className="absolute left-1 top-1 rounded bg-surface-950/70 px-1.5 text-[11px] font-semibold text-white">{i + 1}</span>
+                <button
+                  type="button"
+                  onClick={() => remove(i)}
+                  aria-label={`Remove ${p.file.name}`}
+                  className="absolute right-1 top-1 flex h-6 w-6 cursor-pointer items-center justify-center rounded-full bg-white/90 text-surface-700 shadow-sm hover:bg-white"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              </li>
             ))}
-          </div>
-        </fieldset>
-
-        {mode === "stamp" && (
-          <div className="mt-4 grid grid-cols-4 gap-2 animate-fade-in">
-            {(["top", "center", "bottom", "bottom-right"] as const).map((pos) => (
-              <button
-                key={pos}
-                type="button"
-                onClick={() => setPosition(pos)}
-                aria-pressed={position === pos}
-                className={cn(
-                  "h-9 cursor-pointer rounded-lg text-[13px] font-semibold capitalize",
-                  position === pos ? "bg-primary-700 text-white" : "bg-surface-100 text-surface-700 hover:bg-surface-200"
-                )}
-              >
-                {pos.replace("-", " ")}
-              </button>
-            ))}
-          </div>
+          </ul>
         )}
 
         <div className="mt-6 flex justify-end gap-2">
@@ -1045,11 +1042,11 @@ function AddImageDialog({
           </button>
           <button
             type="button"
-            disabled={!file}
-            onClick={() => file && onApply(file, mode, position)}
+            disabled={picked.length === 0}
+            onClick={() => onApply(picked.map((p) => p.file))}
             className="h-10 cursor-pointer rounded-xl bg-primary-700 px-5 text-sm font-semibold text-white hover:bg-primary-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Add image
+            {picked.length > 1 ? `Add ${picked.length} images` : "Add image"}
           </button>
         </div>
       </div>
