@@ -51,7 +51,15 @@ export class AiBusyError extends Error {
 // They are always added after any configured models, so a busy model (Google
 // returns 503 when one is overloaded) falls through to the next. Free quota is
 // per model, so more models also means more capacity.
-const DEFAULT_GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash"];
+// Gemini 2.5 models are closed to keys created after mid-2026 (they return
+// 404), which then rest for an hour; older keys can still use them.
+const DEFAULT_GEMINI_MODELS = [
+  "gemini-3.5-flash-lite",
+  "gemini-flash-lite-latest",
+  "gemini-3.1-flash-lite",
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-flash",
+];
 // Checked 2026-10-16: these returned clean JSON logbook entries at $0.
 const DEFAULT_OPENROUTER_MODELS = [
   "nvidia/nemotron-3.5-super-vl:free",
@@ -210,6 +218,8 @@ function restFor(err: unknown): number {
   if (err.status === 401 || err.status === 403) return BAD_KEY_REST_MS;
   // Google reports a wrong key as a 400.
   if (err.status === 400 && /API key not valid|API_KEY_INVALID/i.test(err.message)) return BAD_KEY_REST_MS;
+  // Model not available to this key (e.g. retired for new users).
+  if (err.status === 404) return BAD_KEY_REST_MS;
   if (err.status >= 500) return OVERLOADED_REST_MS;
   return 0; // Timeouts, bad output: just try the next slot.
 }
