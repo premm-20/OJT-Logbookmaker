@@ -14,7 +14,7 @@ AI-powered form filling for your OJT (On-the-Job Training) logbook. Paste your d
 - **A4 PDF Generation** — Professional OJT logbook format with auto page breaks
 - **Complete Logbook** — Combine all entries into a single PDF
 - **Student Profile** — One-time setup for the logbook cover page
-- **Guest mode** — `/try` generates a logbook from a PRD without an account; nothing is stored, and guests get 5 generations per hour per IP
+- **Guest mode** — `/try` generates a logbook from a PRD without an account; only the PRD is stored, and guests get 5 generations per hour per IP
 - **Supervisor Feedback** — Monthly performance assessments with 10 rating criteria
 - **Dashboard** — Calendar view with CRUD operations (View, Edit, Delete, Duplicate)
 - **Accounts** — Sign up and sign in with a university email + password (email verified by a 6-digit code), or with the university Google account. Password reset by email code.
@@ -106,7 +106,8 @@ everything; saving again overwrites it, and no history is kept:
 | `user_profiles` | One profile per student (saved over on every update) |
 | `supervisor_feedback` | One feedback form per student (saved over on every update) |
 | `edited_pdfs` + `edited_pdf_chunks` | The student's latest edited PDF, stored in 3 MB chunks because Vercel limits each request to 4.5 MB |
-| `daily_entries` | Logbook entries |
+| `daily_entries` | Logbook entries (latest Fill logbook save only) |
+| `prd_uploads` | Uploaded PRDs: the file (up to 3.5 MB) and its text. One per student (latest), one per guest browser tab |
 
 A full 90-page logbook PDF is about 8 MB, so 200 saved PDFs need roughly 1.6 GB of database storage.
 Logbook PDFs are built in the browser from `public/templates/OJT_Logbook.pdf` (slimmed with

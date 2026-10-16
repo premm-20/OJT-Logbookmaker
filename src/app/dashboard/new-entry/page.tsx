@@ -6,6 +6,7 @@ import { calculateHours, getTodayDate, ensureSpecialAchievements, formatDateDDMM
 import { validateExtraction } from "@/lib/validation";
 import type { ExtractedDayEntry, ExtractedLogbook, ExtractionResponse, DailyEntry, ProfileFormData } from "@/lib/types";
 import { extractTextFromFile } from "@/lib/file-extractor";
+import { cachePrd, restoreCachedPrd, savePrdCopy } from "@/lib/prd-store";
 import LogbookPreview from "@/components/logbook-preview";
 import TimePicker from "@/components/time-picker";
 import { generateSingleDayPDF, generateCompleteLogbookPDF } from "@/lib/pdf-generator";
@@ -153,6 +154,16 @@ function FillLogbookForm() {
   // ── PRD Upload state (Default to PRD first) ──
   const [inputTab, setInputTab] = useState<"paste" | "prd">(initial.inputTab ?? "prd");
   const [prdFile, setPrdFile] = useState<File | null>(initial.prdFile ?? null);
+  // Bring back the PRD picked earlier in this tab (kept until the tab closes).
+  useEffect(() => {
+    let cancelled = false;
+    restoreCachedPrd().then((cached) => {
+      if (cached && !cancelled) setPrdFile((current) => current ?? cached);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Generation runs in EntryDraftProvider so it survives leaving this page.
   // These values are derived from that background job.
@@ -437,6 +448,7 @@ function FillLogbookForm() {
         };
       }
       if (!prdText.trim()) return { ok: false, error: "The file appears to be empty or could not be read." };
+      void savePrdCopy(file, prdText);
 
       // Step 2: Send plain JSON to the API (no file upload needed)
       report("generating", "Writing your logbook entries. This usually takes under a minute; you can open other sections meanwhile.");
@@ -1133,6 +1145,7 @@ function FillLogbookForm() {
                 onChange={(e) => {
                   const file = e.target.files?.[0] || null;
                   setPrdFile(file);
+                  void cachePrd(file);
                   setPrdLocalError("");
                 }}
               />
@@ -1148,6 +1161,7 @@ function FillLogbookForm() {
                     onClick={(e) => {
                       e.stopPropagation();
                       setPrdFile(null);
+                      void cachePrd(null);
                       setPrdLocalError("");
                       const input = document.getElementById("prd-file-input") as HTMLInputElement;
                       if (input) input.value = "";

@@ -17,13 +17,15 @@ import {
 } from "lucide-react";
 import BrandMark from "@/components/brand-mark";
 import { extractTextFromFile } from "@/lib/file-extractor";
+import { cachePrd, restoreCachedPrd, savePrdCopy } from "@/lib/prd-store";
 import { buildLogbookPdf, type ProfileData, type SingleDayData } from "@/lib/pdf-generator";
 import type { ExtractedDayEntry } from "@/lib/types";
 import { cn, ensureSpecialAchievements } from "@/lib/utils";
 
 /**
- * Guest mode: generate a logbook from a PRD without an account. Nothing is
- * stored anywhere; everything lives in this page until it is closed.
+ * Guest mode: generate a logbook from a PRD without an account. The PRD is
+ * kept for this tab (sessionStorage) and a copy goes to the database; the
+ * logbook itself lives only in this page.
  */
 
 interface GuestDay {
@@ -106,6 +108,17 @@ export default function TryPage() {
 
   const running = status === "reading" || status === "writing";
 
+  // Bring back the PRD picked earlier in this tab (kept until the tab closes).
+  useEffect(() => {
+    let cancelled = false;
+    restoreCachedPrd().then((cached) => {
+      if (cached && !cancelled) setFile((current) => current ?? cached);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Elapsed seconds while generating, so a long wait never looks stuck.
   useEffect(() => {
     if (!running) return;
@@ -130,6 +143,7 @@ export default function TryPage() {
     }
     setError("");
     setFile(picked);
+    void cachePrd(picked);
   }
 
   async function generate() {
@@ -143,6 +157,7 @@ export default function TryPage() {
     try {
       const prdText = await extractTextFromFile(file);
       if (!prdText.trim()) throw new Error("That file looks empty. Try a different file.");
+      void savePrdCopy(file, prdText);
 
       setStatus("writing");
       const res = await fetch("/api/generate-from-prd", {
@@ -261,7 +276,7 @@ export default function TryPage() {
           <p className="mt-4 flex items-start gap-2 rounded-xl bg-primary-50 px-3.5 py-3 text-sm text-primary-900 ring-1 ring-inset ring-primary-200">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary-700" aria-hidden />
             <span>
-              You&apos;re using guest mode, so nothing is saved. Download your PDF before closing this page.{" "}
+              Guest logbooks aren&apos;t kept, so download your PDF before closing this page.{" "}
               <Link href="/signup" className="font-semibold underline underline-offset-2 hover:text-primary-700">
                 Create an account
               </Link>{" "}

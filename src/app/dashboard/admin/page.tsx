@@ -21,7 +21,8 @@ import {
   KeyRound,
 } from "lucide-react";
 import type { AdminStudentProfile } from "@/app/api/admin/profiles/route";
-import AdminStudentProfiles, { studentProfilesToCsv } from "@/components/admin-student-profiles";
+import AdminStudentProfiles, { PrdLinks, studentProfilesToCsv } from "@/components/admin-student-profiles";
+import type { AdminPrdUpload } from "@/app/api/admin/prds/route";
 
 export default function AdminPage() {
   // Authentication states
@@ -37,6 +38,7 @@ export default function AdminPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [students, setStudents] = useState<AdminStudentProfile[]>([]);
+  const [guestPrds, setGuestPrds] = useState<AdminPrdUpload[]>([]);
 
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -63,7 +65,7 @@ export default function AdminPage() {
     setError(null);
 
     try {
-      const res = await fetch("/api/admin/profiles");
+      const [res, prdRes] = await Promise.all([fetch("/api/admin/profiles"), fetch("/api/admin/prds")]);
 
       if (res.status === 401) {
         setIsAuthenticated(false);
@@ -79,6 +81,7 @@ export default function AdminPage() {
 
       setIsAuthenticated(true);
       setStudents(data.students || []);
+      if (prdRes.ok) setGuestPrds((await prdRes.json()).uploads || []);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error connecting to server.";
       setError(msg);
@@ -478,6 +481,30 @@ export default function AdminPage() {
         {/* Tab 0: Student profiles (everything students saved) */}
         <AdminStudentProfiles students={filteredStudents} formatDateTime={formatDateTime} />
 
+      </div>
+
+      {/* PRDs uploaded without an account */}
+      <div className="bg-white rounded-3xl border border-surface-200 shadow-sm overflow-hidden">
+        <div className="p-4 sm:p-5 border-b border-surface-200 bg-surface-50/50">
+          <h2 className="text-sm font-bold text-surface-900">Guest uploads ({guestPrds.length})</h2>
+          <p className="mt-0.5 text-xs text-surface-500">PRDs uploaded on the no-account page, newest first.</p>
+        </div>
+        {guestPrds.length === 0 ? (
+          <p className="px-5 py-10 text-center text-sm text-surface-500">No guest uploads yet.</p>
+        ) : (
+          <ul className="divide-y divide-surface-100">
+            {guestPrds.map((u) => (
+              <li key={u.id} className="px-5 py-4">
+                <PrdLinks
+                  id={u.id}
+                  hasFile={u.hasFile}
+                  label={`${u.fileName} · ${u.hasFile ? `${(u.sizeBytes / 1024).toFixed(0)} KB` : "text only"} · ${formatDateTime(u.uploadedAt)}`}
+                />
+                {u.textPreview && <p className="mt-1.5 line-clamp-2 text-xs text-surface-600">{u.textPreview}</p>}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </div>
   );

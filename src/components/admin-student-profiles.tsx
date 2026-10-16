@@ -41,6 +41,7 @@ export function studentProfilesToCsv(students: AdminStudentProfile[]): string {
     "Last entry date",
     "Feedback saved",
     "Edited PDF saved",
+    "PRD uploaded",
     "Account created",
     "Last login",
     "Profile updated",
@@ -56,6 +57,7 @@ export function studentProfilesToCsv(students: AdminStudentProfile[]): string {
     s.lastEntryDate ?? "",
     s.feedbackSavedAt ?? "",
     s.editedPdf?.updatedAt ?? "",
+    s.prd?.uploadedAt ?? "",
     s.accountCreatedAt ?? "",
     s.lastLoginAt ?? "",
     s.profileUpdatedAt ?? "",
@@ -118,6 +120,28 @@ function StudentPdf({ s, formatDateTime }: { s: AdminStudentProfile; formatDateT
         Download
       </button>
       {error && <p className="w-full text-xs font-medium text-[oklch(0.45_0.16_25)]">{error}</p>}
+    </div>
+  );
+}
+
+/** Download links for a stored PRD: the original file and its text. */
+export function PrdLinks({ id, hasFile, label }: { id: string; hasFile: boolean; label: string }) {
+  const href = (as: "file" | "text") => `/api/admin/prds?id=${encodeURIComponent(id)}&as=${as}`;
+  const linkClass =
+    "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-semibold text-primary-800 ring-1 ring-inset ring-primary-200 hover:bg-primary-50";
+  return (
+    <div className="flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
+      <span className="mr-1 min-w-0 truncate text-sm font-medium text-surface-900">{label}</span>
+      {hasFile && (
+        <a href={href("file")} className={linkClass}>
+          <Download className="h-3.5 w-3.5" aria-hidden />
+          File
+        </a>
+      )}
+      <a href={href("text")} className={linkClass}>
+        <Download className="h-3.5 w-3.5" aria-hidden />
+        Text
+      </a>
     </div>
   );
 }
@@ -217,6 +241,18 @@ export default function AdminStudentProfiles({
                         ) : (
                           <p className="text-sm text-surface-600">This student hasn&apos;t saved their profile yet.</p>
                         )}
+                        <div className="mt-4 border-t border-surface-200 pt-3">
+                          <p className="mb-2 text-[11px] font-semibold text-surface-500">PRD</p>
+                          {s.prd ? (
+                            <PrdLinks
+                              id={s.prd.id}
+                              hasFile={s.prd.hasFile}
+                              label={`${s.prd.fileName} · uploaded ${formatDateTime(s.prd.uploadedAt)}`}
+                            />
+                          ) : (
+                            <p className="text-sm text-surface-600">No PRD uploaded yet.</p>
+                          )}
+                        </div>
                         <div className="mt-4 border-t border-surface-200 pt-3">
                           <p className="mb-2 text-[11px] font-semibold text-surface-500">Edited PDF</p>
                           <StudentPdf s={s} formatDateTime={formatDateTime} />

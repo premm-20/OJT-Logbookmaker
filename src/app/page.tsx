@@ -147,7 +147,7 @@ export default function LandingPage() {
                 className="animate-rise mt-3 text-[13px] text-surface-500"
                 style={{ "--i": 3 } as React.CSSProperties}
               >
-                No sign-in needed to upload a PRD. Nothing is saved until you create an account.
+                No sign-in needed to upload a PRD.
               </p>
 
             </div>

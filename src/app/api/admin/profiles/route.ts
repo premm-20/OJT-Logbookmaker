@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { ADMIN_COOKIE, readAdminToken } from "@/lib/auth/admin";
 import { ensureUsersTable } from "@/lib/auth/users";
 import { ensureEditedPdfTables } from "@/lib/edited-pdf-store";
+import { ensurePrdTable } from "@/lib/prd-db";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,8 @@ export interface AdminStudentProfile {
   entryCount: number;
   /** When the supervisor feedback form was last saved, or null. */
   feedbackSavedAt: string | null;
+  /** The student's latest uploaded PRD, or null. */
+  prd: { id: string; fileName: string; sizeBytes: number; hasFile: boolean; uploadedAt: string | null } | null;
   /** The student's latest saved edited PDF, or null. */
   editedPdf: { fileName: string; sizeBytes: number; pageCount: number; chunkCount: number; updatedAt: string | null } | null;
   lastEntryDate: string | null;
@@ -49,7 +52,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    await Promise.all([ensureUsersTable(), ensureEditedPdfTables()]);
+    await Promise.all([ensureUsersTable(), ensureEditedPdfTables(), ensurePrdTable()]);
     const sql = getDb();
     // FULL JOIN: accounts without a profile yet, and profiles saved before
     // the account system existed, both show up. to_jsonb keeps this working
@@ -72,7 +75,11 @@ export async function GET(request: NextRequest) {
         (SELECT to_jsonb(x) FROM (
           SELECT file_name, size_bytes, page_count, chunk_count, updated_at
           FROM edited_pdfs WHERE user_id = s.user_id
-        ) x) AS edited_pdf
+        ) x) AS edited_pdf,
+        (SELECT to_jsonb(y) FROM (
+          SELECT id, file_name, size_bytes, file_data IS NOT NULL AS has_file, updated_at
+          FROM prd_uploads WHERE owner_type = 'student' AND user_id = s.user_id
+        ) y) AS prd
       FROM students s
       ORDER BY COALESCE(s.last_login_at, (s.profile->>'updated_at')::timestamptz) DESC NULLS LAST
     `;
@@ -89,6 +96,15 @@ export async function GET(request: NextRequest) {
         profileUpdatedAt: iso(p?.updated_at),
         entryCount: Number(r.entry_count) || 0,
         feedbackSavedAt: iso(r.feedback_saved_at),
+        prd: r.prd
+          ? {
+              id: text(r.prd.id),
+              fileName: text(r.prd.file_name),
+              sizeBytes: Number(r.prd.size_bytes) || 0,
+              hasFile: Boolean(r.prd.has_file),
+              uploadedAt: iso(r.prd.updated_at),
+            }
+          : null,
         editedPdf: r.edited_pdf
           ? {
               fileName: text(r.edited_pdf.file_name),
