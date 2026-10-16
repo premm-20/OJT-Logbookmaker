@@ -239,7 +239,8 @@ and the next key takes over. Gemini keys are tried first, then OpenRouter.
 1. Gemini: create keys at [Google AI Studio](https://aistudio.google.com/app/apikey).
    Free quota is per Google Cloud project, so create each key in its own project.
 2. OpenRouter (optional backup): create a key at [openrouter.ai/keys](https://openrouter.ai/keys).
-   Models ending in `:free` cost nothing; the account allows 50 free requests a day,
+   Only models ending in `:free` are used (the app ignores any other and sends a
+   $0 max price), so you are never charged. The account allows 50 free requests a day,
    or 1000 a day after a one-time $10 credit purchase.
 3. Add them to `.env.local` (and Vercel) as comma-separated lists:
    `GEMINI_API_KEYS`, `OPENROUTER_API_KEYS`, and optionally `GEMINI_MODELS` /

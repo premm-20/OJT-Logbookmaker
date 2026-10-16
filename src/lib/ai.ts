@@ -11,6 +11,9 @@
  *   GEMINI_MODELS        / GEMINI_MODEL        default gemini-2.5-flash
  *   OPENROUTER_API_KEYS  / OPENROUTER_API_KEY
  *   OPENROUTER_MODELS    / OPENROUTER_MODEL    default: free models
+ *
+ * OpenRouter is free-only: models without the ":free" suffix are ignored and
+ * every request carries a $0 max price, so the account is never charged.
  */
 
 type Provider = "gemini" | "openrouter";
@@ -41,11 +44,20 @@ export class AiBusyError extends Error {
 }
 
 const DEFAULT_GEMINI_MODELS = ["gemini-2.5-flash"];
+// Checked 2026-10-16: these returned clean JSON logbook entries at $0.
 const DEFAULT_OPENROUTER_MODELS = [
-  "google/gemma-4-31b-it:free",
+  "nvidia/nemotron-3.5-super-vl:free",
   "nvidia/nemotron-3-super-120b-a12b:free",
+  "google/gemma-4-31b-it:free",
   "google/gemma-4-26b-a4b-it:free",
 ];
+
+function freeOnly(models: string[]): string[] {
+  const free = models.filter((m) => m.endsWith(":free"));
+  const paid = models.filter((m) => !m.endsWith(":free"));
+  if (paid.length) console.warn(`[ai] Ignoring paid OpenRouter models: ${paid.join(", ")}`);
+  return free;
+}
 
 const REQUEST_TIMEOUT_MS = 120_000;
 // When every slot is resting, wait this long at most for one to free up.
@@ -68,7 +80,7 @@ function buildSlots(): Slot[] {
   const geminiKeys = envList("GEMINI_API_KEYS", "GEMINI_API_KEY");
   const geminiModels = envList("GEMINI_MODELS", "GEMINI_MODEL");
   const openrouterKeys = envList("OPENROUTER_API_KEYS", "OPENROUTER_API_KEY");
-  const openrouterModels = envList("OPENROUTER_MODELS", "OPENROUTER_MODEL");
+  const openrouterModels = freeOnly(envList("OPENROUTER_MODELS", "OPENROUTER_MODEL"));
 
   const pairs = (provider: Provider, keys: string[], models: string[]) =>
     models.flatMap((model) =>
@@ -155,6 +167,8 @@ async function callOpenRouter(slot: Slot, req: AiRequest): Promise<string> {
     body: JSON.stringify({
       model: slot.model,
       temperature: req.temperature,
+      // Never route to a paid endpoint.
+      provider: { max_price: { prompt: 0, completion: 0 } },
       messages: [
         ...(req.system ? [{ role: "system", content: req.system }] : []),
         { role: "user", content: req.prompt },
