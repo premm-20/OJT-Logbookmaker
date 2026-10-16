@@ -6,12 +6,26 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
+ * Normalises "YYYY-MM-DD", "DD-MM-YYYY" or "DD/MM/YYYY" to "YYYY-MM-DD".
+ * Anything else is returned trimmed and unchanged.
+ */
+export function toIsoDate(dateStr: string): string {
+  const s = (dateStr || "").trim();
+  const ymd = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (ymd) return `${ymd[1]}-${ymd[2].padStart(2, "0")}-${ymd[3].padStart(2, "0")}`;
+  const dmy = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+  if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
+  return s;
+}
+
+/**
  * Format a date string to "DD Month YYYY" format.
  * e.g., "2026-09-09" → "09 September 2026"
  */
 export function formatDate(dateStr: string): string {
   if (!dateStr) return "";
-  const date = new Date(dateStr + "T00:00:00");
+  const date = new Date(toIsoDate(dateStr) + "T00:00:00");
+  if (isNaN(date.getTime())) return dateStr;
   return date.toLocaleDateString("en-GB", {
     day: "2-digit",
     month: "long",
@@ -94,7 +108,7 @@ export function formatTime(timeStr: string): string {
   const match = cleaned.match(/^(\d{1,2}):(\d{2})(?:\s*(AM|PM))?$/i);
   if (!match) return timeStr;
 
-  let hours = parseInt(match[1], 10);
+  const hours = parseInt(match[1], 10);
   const minutes = match[2].padStart(2, "0");
   const period = match[3]?.toUpperCase();
 
@@ -149,7 +163,8 @@ export function getTodayDate(): string {
  */
 export function getMonthYear(dateStr: string): string {
   if (!dateStr) return "";
-  const date = new Date(dateStr + "T00:00:00");
+  const date = new Date(toIsoDate(dateStr) + "T00:00:00");
+  if (isNaN(date.getTime())) return "Undated";
   return date.toLocaleDateString("en-GB", {
     month: "long",
     year: "numeric",

@@ -614,7 +614,8 @@ function FillLogbookForm() {
       await fetch("/api/entries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: currentUserId, entries: [localRow] }),
+        // Replaces any saved entry for the same date.
+        body: JSON.stringify({ entries: [localRow], replace: "date" }),
       });
     } catch (err) {
       console.warn("Entry save warning:", err);
@@ -697,7 +698,8 @@ function FillLogbookForm() {
       await fetch("/api/entries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: currentUserId, entries: rows }),
+        // The new set replaces every previously saved day.
+        body: JSON.stringify({ entries: rows, replace: "all" }),
       });
     } catch (err) {
       console.warn("Neon bulk entries save warning:", err);
