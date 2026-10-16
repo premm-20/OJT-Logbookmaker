@@ -3,304 +3,220 @@
 import { useEffect, useState } from "react";
 import type { RatingValue, SupervisorFeedback } from "@/lib/types";
 import { RATING_CRITERIA, RATING_OPTIONS } from "@/lib/types";
-import { formatDate } from "@/lib/utils";
-import {
-  MessageSquare,
-  Save,
-  Loader2,
-  CheckCircle,
-  AlertCircle,
-  PlusCircle,
-  Trash2,
-} from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, Save } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+type FormData = {
+  from_date: string;
+  to_date: string;
+  student_name: string;
+  remarks: string;
+  supervisor_name: string;
+  designation: string;
+  signature_date: string;
+} & Record<(typeof RATING_CRITERIA)[number]["key"], RatingValue>;
+
+const EMPTY_FORM = {
+  from_date: "",
+  to_date: "",
+  student_name: "",
+  remarks: "",
+  supervisor_name: "",
+  designation: "",
+  signature_date: "",
+  ...Object.fromEntries(RATING_CRITERIA.map((c) => [c.key, ""])),
+} as FormData;
+
+const RATING_POINTS: Record<string, number> = { good: 3, acceptable: 2, needs_improvement: 1 };
+
+function fromSaved(saved: SupervisorFeedback): FormData {
+  const form = { ...EMPTY_FORM };
+  for (const key of Object.keys(EMPTY_FORM) as (keyof FormData)[]) {
+    const value = saved[key as keyof SupervisorFeedback];
+    if (typeof value === "string") (form as Record<string, string>)[key] = value;
+  }
+  return form;
+}
 
 export default function FeedbackPage() {
-  const [feedbacks, setFeedbacks] = useState<SupervisorFeedback[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState<FormData | null>(null);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
-    fetchFeedbacks();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false;
+    fetch("/api/feedback", { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok) throw new Error();
+        const { feedback } = (await res.json()) as { feedback: (SupervisorFeedback & { updated_at?: string }) | null };
+        if (cancelled) return;
+        setForm(feedback ? fromSaved(feedback) : EMPTY_FORM);
+        setSavedAt(feedback ? feedback.updated_at || feedback.created_at : null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLoadError("Couldn't load your saved feedback. You can still fill the form.");
+        setForm(EMPTY_FORM);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  async function fetchFeedbacks() {
-    const userId = (typeof window !== "undefined" && localStorage.getItem("ojt_user_id")) || "";
-    if (!userId) {
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const res = await fetch(`/api/feedback?userId=${encodeURIComponent(userId)}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data?.feedbacks) setFeedbacks(data.feedbacks as SupervisorFeedback[]);
-      }
-    } catch (err) {
-      console.error("Error loading feedback from Neon:", err);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleDelete(id: string) {
-    if (!confirm("Delete this feedback?")) return;
-    try {
-      await fetch(`/api/feedback?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-      setFeedbacks((prev) => prev.filter((f) => f.id !== id));
-    } catch (err) {
-      alert("Failed to delete feedback");
-    }
-  }
-
   return (
-    <div className="max-w-3xl mx-auto space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary-50 flex items-center justify-center">
-            <MessageSquare className="w-5 h-5 text-primary-600" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-surface-900">Supervisor Feedback</h1>
-            <p className="text-sm text-surface-800/50">Monthly performance assessments</p>
-          </div>
-        </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-medium hover:bg-primary-600 cursor-pointer shadow-md shadow-primary-500/15"
-        >
-          <PlusCircle className="w-4 h-4" />
-          New Feedback
-        </button>
+    <div className="mx-auto max-w-3xl space-y-6 pb-16 animate-fade-in">
+      <div>
+        <h1 className="text-[28px] font-semibold tracking-tight text-surface-950">Supervisor feedback</h1>
+        <p className="mt-1 text-sm text-surface-600">
+          {savedAt
+            ? `Last saved ${new Date(savedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}. Saving again replaces it.`
+            : "Your supervisor's assessment. Saving again replaces the previous one."}
+        </p>
       </div>
 
-      {showForm && (
-        <FeedbackForm
-          onSaved={() => {
-            setShowForm(false);
-            fetchFeedbacks();
-          }}
-        />
+      {loadError && (
+        <p role="alert" className="flex items-center gap-2 rounded-xl bg-danger/10 px-3.5 py-3 text-sm font-medium text-[oklch(0.45_0.16_25)]">
+          <AlertCircle className="h-4 w-4 shrink-0" aria-hidden />
+          {loadError}
+        </p>
       )}
 
-      {loading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-6 h-6 text-primary-500 animate-spin" />
-        </div>
-      ) : feedbacks.length === 0 && !showForm ? (
-        <div className="text-center py-12 text-surface-800/50 text-sm">
-          No supervisor feedback records yet.
-        </div>
+      {form ? (
+        <FeedbackForm initial={form} onSaved={(at) => setSavedAt(at)} />
       ) : (
-        <div className="space-y-4">
-          {feedbacks.map((fb) => (
-            <div key={fb.id} className="bg-white rounded-xl border border-surface-200 p-5">
-              <div className="flex items-start justify-between mb-3">
-                <div>
-                  <p className="text-sm font-semibold text-surface-900">
-                    {formatDate(fb.from_date)} — {formatDate(fb.to_date)}
-                  </p>
-                  <p className="text-xs text-surface-800/50">{fb.student_name}</p>
-                </div>
-                <button
-                  onClick={() => handleDelete(fb.id)}
-                  className="p-1.5 rounded-lg text-surface-800/40 hover:text-red-600 hover:bg-red-50 cursor-pointer"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                {RATING_CRITERIA.map((c) => {
-                  const val = fb[c.key as keyof SupervisorFeedback] as string;
-                  return (
-                    <div key={c.key} className="flex items-center justify-between py-1 px-2 rounded bg-surface-50">
-                      <span className="text-surface-800/70">{c.label}</span>
-                      <span className={`font-medium ${
-                        val === "good" ? "text-green-700" :
-                        val === "acceptable" ? "text-amber-700" :
-                        "text-red-700"
-                      }`}>
-                        {val ? val.replace("_", " ").replace(/\b\w/g, (l) => l.toUpperCase()) : "—"}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {fb.remarks && (
-                <div className="mt-3 p-3 rounded-lg bg-surface-50 text-sm text-surface-800/70">
-                  <strong>Remarks:</strong> {fb.remarks}
-                </div>
-              )}
-            </div>
-          ))}
+        <div className="flex justify-center py-16" role="status" aria-label="Loading">
+          <Loader2 className="h-6 w-6 animate-spin text-primary-600" aria-hidden />
         </div>
       )}
     </div>
   );
 }
 
-// ============================================================
-// Feedback Form Component
-// ============================================================
-function FeedbackForm({ onSaved }: { onSaved: () => void }) {
+function FeedbackForm({ initial, onSaved }: { initial: FormData; onSaved: (savedAt: string) => void }) {
+  const [form, setForm] = useState<FormData>(initial);
   const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
+  const [status, setStatus] = useState<{ tone: "success" | "error"; text: string } | null>(null);
 
-  const [formData, setFormData] = useState({
-    from_date: "",
-    to_date: "",
-    student_name: "",
-    punctuality: "" as RatingValue,
-    professional_appearance: "" as RatingValue,
-    ability_to_communicate: "" as RatingValue,
-    interest_shown_for_learning: "" as RatingValue,
-    productivity_at_work: "" as RatingValue,
-    error_free_work: "" as RatingValue,
-    working_as_team: "" as RatingValue,
-    initiative_and_commitment: "" as RatingValue,
-    flexibility_and_adaptability: "" as RatingValue,
-    adherence_to_safety_ethics: "" as RatingValue,
-    remarks: "",
-    supervisor_name: "",
-    designation: "",
-    signature_date: "",
-  });
-
-  function handleChange(field: string, value: string) {
-    setFormData((prev) => ({ ...prev, [field]: value }));
+  function update(field: keyof FormData, value: string) {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    setStatus(null);
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
-
-    const userId = (typeof window !== "undefined" && localStorage.getItem("ojt_user_id")) || "";
-    if (!userId) {
-      alert("Please log in first.");
-      setSaving(false);
-      return;
-    }
-
-    // Calculate total score
-    const ratingValues: Record<string, number> = { good: 3, acceptable: 2, needs_improvement: 1 };
-    let total = 0;
-    for (const c of RATING_CRITERIA) {
-      const val = formData[c.key as keyof typeof formData] as string;
-      total += ratingValues[val] || 0;
-    }
-
+    setStatus(null);
+    const total = RATING_CRITERIA.reduce((sum, c) => sum + (RATING_POINTS[form[c.key]] || 0), 0);
     try {
       const res = await fetch("/api/feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId,
-          ...formData,
-          total_score: total,
-        }),
+        body: JSON.stringify({ ...form, total_score: total }),
       });
-
-      if (!res.ok) {
-        setStatus("error");
-      } else {
-        setStatus("success");
-        onSaved();
-      }
+      if (!res.ok) throw new Error();
+      setStatus({ tone: "success", text: "Feedback saved." });
+      onSaved(new Date().toISOString());
     } catch {
-      setStatus("error");
+      setStatus({ tone: "error", text: "Couldn't save the feedback. Please try again." });
     } finally {
       setSaving(false);
     }
   }
 
-  return (
-    <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-surface-200 p-6 shadow-sm space-y-4 animate-fade-in">
-      <h3 className="text-base font-semibold text-surface-900">New Feedback</h3>
+  const inputClass =
+    "w-full rounded-xl border border-surface-300 bg-white px-3 py-2.5 text-sm text-surface-900 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/20";
+  const labelClass = "mb-1.5 block text-[13px] font-medium text-surface-700";
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+  return (
+    <form onSubmit={handleSubmit} className="space-y-6 rounded-3xl bg-white p-6 ring-1 ring-surface-200 sm:p-7">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div>
-          <label className="block text-xs font-medium text-surface-800 mb-1">From Date</label>
-          <input type="date" value={formData.from_date} onChange={(e) => handleChange("from_date", e.target.value)} required
-            className="w-full px-3 py-2 rounded-lg border border-surface-200 text-sm" />
+          <label htmlFor="fb-from" className={labelClass}>From date</label>
+          <input id="fb-from" type="date" required value={form.from_date} onChange={(e) => update("from_date", e.target.value)} className={inputClass} />
         </div>
         <div>
-          <label className="block text-xs font-medium text-surface-800 mb-1">To Date</label>
-          <input type="date" value={formData.to_date} onChange={(e) => handleChange("to_date", e.target.value)} required
-            className="w-full px-3 py-2 rounded-lg border border-surface-200 text-sm" />
+          <label htmlFor="fb-to" className={labelClass}>To date</label>
+          <input id="fb-to" type="date" required value={form.to_date} onChange={(e) => update("to_date", e.target.value)} className={inputClass} />
         </div>
         <div>
-          <label className="block text-xs font-medium text-surface-800 mb-1">Student Name</label>
-          <input type="text" value={formData.student_name} onChange={(e) => handleChange("student_name", e.target.value)} required
-            className="w-full px-3 py-2 rounded-lg border border-surface-200 text-sm" />
+          <label htmlFor="fb-student" className={labelClass}>Student name</label>
+          <input id="fb-student" type="text" required value={form.student_name} onChange={(e) => update("student_name", e.target.value)} className={inputClass} />
         </div>
       </div>
 
-      {/* Rating criteria */}
-      <div className="space-y-3">
-        <h4 className="text-sm font-medium text-surface-800">Performance Ratings</h4>
+      <fieldset className="space-y-2">
+        <legend className="mb-2 text-sm font-semibold text-surface-900">Performance ratings</legend>
         {RATING_CRITERIA.map((criteria) => (
-          <div key={criteria.key} className="flex items-center justify-between py-2 px-3 rounded-lg bg-surface-50">
+          <div key={criteria.key} className="flex flex-col gap-2 rounded-xl bg-surface-50 px-3.5 py-3 sm:flex-row sm:items-center sm:justify-between">
             <span className="text-sm text-surface-800">{criteria.label}</span>
-            <div className="flex gap-2">
-              {RATING_OPTIONS.map((opt) => (
-                <label key={opt.value} className="flex items-center gap-1 cursor-pointer">
-                  <input
-                    type="radio"
-                    name={criteria.key}
-                    value={opt.value}
-                    checked={formData[criteria.key as keyof typeof formData] === opt.value}
-                    onChange={() => handleChange(criteria.key, opt.value)}
-                    className="accent-primary-500"
-                  />
-                  <span className="text-xs text-surface-800/70">{opt.label}</span>
-                </label>
-              ))}
+            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={criteria.label}>
+              {RATING_OPTIONS.map((opt) => {
+                const checked = form[criteria.key] === opt.value;
+                return (
+                  <label
+                    key={opt.value}
+                    className={cn(
+                      "cursor-pointer rounded-lg px-2.5 py-1.5 text-xs font-semibold ring-1 ring-inset transition-colors",
+                      checked ? "bg-primary-700 text-white ring-primary-700" : "bg-white text-surface-700 ring-surface-300 hover:bg-surface-100"
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name={criteria.key}
+                      value={opt.value}
+                      checked={checked}
+                      onChange={() => update(criteria.key, opt.value)}
+                      className="sr-only"
+                    />
+                    {opt.label}
+                  </label>
+                );
+              })}
             </div>
           </div>
         ))}
-      </div>
+      </fieldset>
 
-      {/* Additional fields */}
       <div>
-        <label className="block text-xs font-medium text-surface-800 mb-1">Supervisor&apos;s Remarks</label>
-        <textarea value={formData.remarks} onChange={(e) => handleChange("remarks", e.target.value)} rows={3}
-          className="w-full px-3 py-2 rounded-lg border border-surface-200 text-sm resize-y" />
+        <label htmlFor="fb-remarks" className={labelClass}>Supervisor&apos;s remarks</label>
+        <textarea id="fb-remarks" rows={3} value={form.remarks} onChange={(e) => update("remarks", e.target.value)} className={cn(inputClass, "resize-y")} />
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div>
-          <label className="block text-xs font-medium text-surface-800 mb-1">Supervisor&apos;s Name</label>
-          <input type="text" value={formData.supervisor_name} onChange={(e) => handleChange("supervisor_name", e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-surface-200 text-sm" />
+          <label htmlFor="fb-supervisor" className={labelClass}>Supervisor&apos;s name</label>
+          <input id="fb-supervisor" type="text" value={form.supervisor_name} onChange={(e) => update("supervisor_name", e.target.value)} className={inputClass} />
         </div>
         <div>
-          <label className="block text-xs font-medium text-surface-800 mb-1">Designation</label>
-          <input type="text" value={formData.designation} onChange={(e) => handleChange("designation", e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-surface-200 text-sm" />
+          <label htmlFor="fb-designation" className={labelClass}>Designation</label>
+          <input id="fb-designation" type="text" value={form.designation} onChange={(e) => update("designation", e.target.value)} className={inputClass} />
         </div>
         <div>
-          <label className="block text-xs font-medium text-surface-800 mb-1">Date</label>
-          <input type="date" value={formData.signature_date} onChange={(e) => handleChange("signature_date", e.target.value)}
-            className="w-full px-3 py-2 rounded-lg border border-surface-200 text-sm" />
+          <label htmlFor="fb-date" className={labelClass}>Date</label>
+          <input id="fb-date" type="date" value={form.signature_date} onChange={(e) => update("signature_date", e.target.value)} className={inputClass} />
         </div>
       </div>
 
-      {status !== "idle" && (
-        <div className={`p-3 rounded-lg flex items-center gap-2 text-sm ${
-          status === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"
-        }`}>
-          {status === "success" ? <CheckCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-          {status === "success" ? "Feedback saved!" : "Failed to save feedback."}
-        </div>
+      {status && (
+        <p
+          role={status.tone === "error" ? "alert" : "status"}
+          className={cn(
+            "flex items-center gap-2 rounded-xl px-3.5 py-3 text-sm font-medium",
+            status.tone === "error" ? "bg-danger/10 text-[oklch(0.45_0.16_25)]" : "bg-success/10 text-[oklch(0.42_0.11_155)]"
+          )}
+        >
+          {status.tone === "error" ? <AlertCircle className="h-4 w-4 shrink-0" aria-hidden /> : <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden />}
+          {status.text}
+        </p>
       )}
 
-      <button type="submit" disabled={saving}
-        className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-medium hover:bg-primary-600 disabled:opacity-50 cursor-pointer shadow-md">
-        {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-        {saving ? "Saving..." : "Save Feedback"}
+      <button
+        type="submit"
+        disabled={saving}
+        className="flex h-11 cursor-pointer items-center gap-2 rounded-xl bg-primary-700 px-5 text-sm font-semibold text-white hover:bg-primary-800 disabled:opacity-60"
+      >
+        {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Save className="h-4 w-4" aria-hidden />}
+        {saving ? "Saving..." : "Save feedback"}
       </button>
     </form>
   );

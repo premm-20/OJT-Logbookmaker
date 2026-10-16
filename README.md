@@ -96,9 +96,20 @@ Google) they add their mobile number once at `/onboarding`.
 1. Create a serverless PostgreSQL database at [neon.tech](https://neon.tech)
 2. Copy your connection string into `DATABASE_URL` in `.env.local` and in your Vercel environment variables.
 
-The `app_users` table (links Neon users to logbook accounts) is created automatically on first use, and missing
-`user_profiles` columns are added automatically. Account IDs are `usr_<mobile>`, so students who
-used the earlier portal keep their existing entries when they sign up with the same number.
+The app creates and updates its tables on first use. Each student keeps one current copy of
+everything; saving again overwrites it, and no history is kept:
+
+| Table | Holds |
+|---|---|
+| `app_users` | Account, linked to the Neon Auth user, with only the **last** sign-in time |
+| `user_profiles` | One profile per student (saved over on every update) |
+| `supervisor_feedback` | One feedback form per student (saved over on every update) |
+| `edited_pdfs` + `edited_pdf_chunks` | The student's latest edited PDF, stored in 3 MB chunks because Vercel limits each request to 4.5 MB |
+| `daily_entries` | Logbook entries |
+
+A full 90-page logbook PDF is about 8 MB, so 200 saved PDFs need roughly 1.6 GB of database storage.
+Logbook PDFs are built in the browser from `public/templates/OJT_Logbook.pdf` (slimmed with
+`node scripts/slim-template.mjs`), so they never pass through a Vercel function.
 
 ```sql
 -- ============================================================
@@ -295,8 +306,9 @@ src/
 ├── lib/
 │   ├── auth/                            # Neon Auth server/client, session → account, admin token
 │   ├── db.ts                            # Neon Serverless PostgreSQL connection
-│   ├── login-tracker.ts                 # Audit logging & database session tracking
-│   ├── pdf-generator.ts                 # jsPDF document generation
+│   ├── logbook-stamp.ts                 # Stamps profile + entries onto the logbook template
+│   ├── pdf-generator.ts                 # Builds logbook PDFs in the browser
+│   ├── edited-pdf-*.ts                  # Saving the edited PDF to Neon in chunks
 │   ├── types.ts                         # TypeScript interfaces
 │   ├── validation.ts                    # Text verification logic
 │   └── utils.ts                         # Date/time utilities

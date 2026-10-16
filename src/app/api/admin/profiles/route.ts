@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getDb } from "@/lib/db";
 import { ADMIN_COOKIE, readAdminToken } from "@/lib/auth/admin";
 import { ensureUsersTable } from "@/lib/auth/users";
+import { ensureEditedPdfTables } from "@/lib/edited-pdf-store";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +15,10 @@ export interface AdminStudentProfile {
   lastLoginAt: string | null;
   profileUpdatedAt: string | null;
   entryCount: number;
-  feedbackCount: number;
+  /** When the supervisor feedback form was last saved, or null. */
+  feedbackSavedAt: string | null;
+  /** The student's latest saved edited PDF, or null. */
+  editedPdf: { fileName: string; sizeBytes: number; pageCount: number; chunkCount: number; updatedAt: string | null } | null;
   lastEntryDate: string | null;
   profile: {
     learnerName: string;
@@ -45,7 +49,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    await ensureUsersTable();
+    await Promise.all([ensureUsersTable(), ensureEditedPdfTables()]);
     const sql = getDb();
     // FULL JOIN: accounts without a profile yet, and profiles saved before
     // the account system existed, both show up. to_jsonb keeps this working
@@ -63,7 +67,12 @@ export async function GET(request: NextRequest) {
         s.*,
         (SELECT count(*)::int FROM daily_entries e WHERE e.user_id = s.user_id) AS entry_count,
         (SELECT max(e.date)::text FROM daily_entries e WHERE e.user_id = s.user_id) AS last_entry_date,
-        (SELECT count(*)::int FROM supervisor_feedback f WHERE f.user_id = s.user_id) AS feedback_count
+        (SELECT COALESCE(to_jsonb(f)->>'updated_at', f.created_at::text) FROM supervisor_feedback f
+          WHERE f.user_id = s.user_id LIMIT 1) AS feedback_saved_at,
+        (SELECT to_jsonb(x) FROM (
+          SELECT file_name, size_bytes, page_count, chunk_count, updated_at
+          FROM edited_pdfs WHERE user_id = s.user_id
+        ) x) AS edited_pdf
       FROM students s
       ORDER BY COALESCE(s.last_login_at, (s.profile->>'updated_at')::timestamptz) DESC NULLS LAST
     `;
@@ -79,7 +88,16 @@ export async function GET(request: NextRequest) {
         lastLoginAt: iso(r.last_login_at),
         profileUpdatedAt: iso(p?.updated_at),
         entryCount: Number(r.entry_count) || 0,
-        feedbackCount: Number(r.feedback_count) || 0,
+        feedbackSavedAt: iso(r.feedback_saved_at),
+        editedPdf: r.edited_pdf
+          ? {
+              fileName: text(r.edited_pdf.file_name),
+              sizeBytes: Number(r.edited_pdf.size_bytes) || 0,
+              pageCount: Number(r.edited_pdf.page_count) || 0,
+              chunkCount: Number(r.edited_pdf.chunk_count) || 0,
+              updatedAt: iso(r.edited_pdf.updated_at),
+            }
+          : null,
         lastEntryDate: r.last_entry_date ? text(r.last_entry_date) : null,
         profile: p
           ? {

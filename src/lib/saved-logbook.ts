@@ -1,7 +1,7 @@
 "use client";
 
 import type { DailyEntry } from "@/lib/types";
-import type { ProfileData, SingleDayData } from "@/lib/pdf-generator";
+import { buildLogbookPdf, type ProfileData, type SingleDayData } from "@/lib/pdf-generator";
 import { calculateHours } from "@/lib/utils";
 
 /** Loads the signed-in student's profile and saved entries. */
@@ -38,12 +38,6 @@ export async function loadSavedLogbookData(): Promise<{ profile: ProfileData; en
 }
 
 /** Builds the official logbook with the saved entries stamped in, as PDF bytes. */
-export async function buildSavedLogbookPdf(profile: ProfileData, entries: SingleDayData[]): Promise<Uint8Array> {
-  const res = await fetch("/api/generate-pdf", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode: "complete", profile, entries, preview: true }),
-  });
-  if (!res.ok) throw new Error("Couldn't build your saved logbook. Please try again.");
-  return new Uint8Array(await res.arrayBuffer());
+export function buildSavedLogbookPdf(profile: ProfileData, entries: SingleDayData[]): Promise<Uint8Array> {
+  return buildLogbookPdf(profile, entries);
 }

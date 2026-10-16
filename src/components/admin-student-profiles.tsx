@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Download, Loader2 } from "lucide-react";
 import type { AdminStudentProfile } from "@/app/api/admin/profiles/route";
 import { cn } from "@/lib/utils";
 
@@ -39,7 +39,8 @@ export function studentProfilesToCsv(students: AdminStudentProfile[]): string {
     ...PROFILE_FIELDS.map((f) => f.label),
     "Entries saved",
     "Last entry date",
-    "Feedback forms",
+    "Feedback saved",
+    "Edited PDF saved",
     "Account created",
     "Last login",
     "Profile updated",
@@ -53,12 +54,72 @@ export function studentProfilesToCsv(students: AdminStudentProfile[]): string {
     ...PROFILE_FIELDS.map((f) => s.profile?.[f.key] ?? ""),
     s.entryCount,
     s.lastEntryDate ?? "",
-    s.feedbackCount,
+    s.feedbackSavedAt ?? "",
+    s.editedPdf?.updatedAt ?? "",
     s.accountCreatedAt ?? "",
     s.lastLoginAt ?? "",
     s.profileUpdatedAt ?? "",
   ]);
   return [headers, ...rows].map((r) => r.map(cell).join(",")).join("\n");
+}
+
+/** Fetches a student's saved PDF in chunks and starts a download. */
+async function downloadStudentPdf(s: AdminStudentProfile) {
+  const pdf = s.editedPdf;
+  if (!pdf) return;
+  const parts = await Promise.all(
+    Array.from({ length: pdf.chunkCount }, async (_, part) => {
+      const res = await fetch(`/api/admin/edited-pdf?userId=${encodeURIComponent(s.userId)}&part=${part}`, { cache: "no-store" });
+      if (!res.ok) throw new Error("Couldn't download this PDF.");
+      return res.blob();
+    })
+  );
+  const url = URL.createObjectURL(new Blob(parts, { type: "application/pdf" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${(s.name || s.userId).replace(/[^\w.-]+/g, "_")}_${pdf.fileName}`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function StudentPdf({ s, formatDateTime }: { s: AdminStudentProfile; formatDateTime: (iso: string | null | undefined) => string }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const pdf = s.editedPdf;
+  if (!pdf) return <p className="text-sm text-surface-600">No edited PDF saved yet.</p>;
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium text-surface-900">{pdf.fileName}</p>
+        <p className="text-[11px] text-surface-500">
+          {pdf.pageCount} pages · {(pdf.sizeBytes / 1048576).toFixed(1)} MB · saved {formatDateTime(pdf.updatedAt)}
+        </p>
+      </div>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={async (e) => {
+          e.stopPropagation();
+          setBusy(true);
+          setError("");
+          try {
+            await downloadStudentPdf(s);
+          } catch (err) {
+            setError(err instanceof Error ? err.message : "Couldn't download this PDF.");
+          } finally {
+            setBusy(false);
+          }
+        }}
+        className="flex h-9 cursor-pointer items-center gap-1.5 rounded-lg bg-primary-700 px-3 text-xs font-semibold text-white hover:bg-primary-800 disabled:opacity-60"
+      >
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Download className="h-3.5 w-3.5" aria-hidden />}
+        Download
+      </button>
+      {error && <p className="w-full text-xs font-medium text-[oklch(0.45_0.16_25)]">{error}</p>}
+    </div>
+  );
 }
 
 export default function AdminStudentProfiles({
@@ -156,10 +217,14 @@ export default function AdminStudentProfiles({
                         ) : (
                           <p className="text-sm text-surface-600">This student hasn&apos;t saved their profile yet.</p>
                         )}
+                        <div className="mt-4 border-t border-surface-200 pt-3">
+                          <p className="mb-2 text-[11px] font-semibold text-surface-500">Edited PDF</p>
+                          <StudentPdf s={s} formatDateTime={formatDateTime} />
+                        </div>
                         <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1 border-t border-surface-200 pt-3 text-[11px] text-surface-500">
                           <span>User ID: <span className="font-mono">{s.userId}</span></span>
                           {s.mobile && <span>Mobile: {s.mobile}</span>}
-                          <span>Feedback forms: {s.feedbackCount}</span>
+                          <span>Supervisor feedback: {s.feedbackSavedAt ? `saved ${formatDateTime(s.feedbackSavedAt)}` : "not saved"}</span>
                           <span>Account created: {formatDateTime(s.accountCreatedAt)}</span>
                           <span>Last login: {formatDateTime(s.lastLoginAt)}</span>
                           <span>Profile updated: {formatDateTime(s.profileUpdatedAt)}</span>

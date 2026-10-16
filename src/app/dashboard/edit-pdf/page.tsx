@@ -24,7 +24,9 @@ import {
   ArrowLeftRight,
   BookCheck,
   CheckCircle2,
+  CloudUpload,
   Download,
+  FileClock,
   FileUp,
   GripVertical,
   ImagePlus,
@@ -36,8 +38,9 @@ import {
 import { cn } from "@/lib/utils";
 import { loadPdfForRendering, normalizeImageForPdf, renderPageToDataUrl } from "@/lib/pdf-render";
 import { buildSavedLogbookPdf, loadSavedLogbookData } from "@/lib/saved-logbook";
+import { getEditedPdfInfo, loadEditedPdf, saveEditedPdf, type EditedPdfInfo } from "@/lib/edited-pdf-client";
 
-type Source = "upload" | "saved";
+type Source = "upload" | "saved" | "edited";
 interface PageItem {
   /** Stable id for drag and drop. */
   id: string;
@@ -81,6 +84,8 @@ function PdfEditor() {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [showImageDialog, setShowImageDialog] = useState(false);
   const [savedCount, setSavedCount] = useState<number | null>(null);
+  // undefined while checking, null when the student has no saved edit.
+  const [editedInfo, setEditedInfo] = useState<EditedPdfInfo | null | undefined>(undefined);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const idCounter = useRef(0);
@@ -139,6 +144,18 @@ function PdfEditor() {
     }
   }, [flash, openBytes]);
 
+  async function openEditedPdf() {
+    if (!editedInfo) return;
+    setBusy("Opening your saved PDF...");
+    try {
+      await openBytes(await loadEditedPdf(editedInfo), editedInfo.fileName, "edited");
+    } catch (err) {
+      flash(err instanceof Error ? err.message : "Couldn't open your saved PDF.", "error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function openUploadedFile(file: File) {
     if (!/pdf$/i.test(file.type) && !/\.pdf$/i.test(file.name)) {
       flash("Choose a PDF file.", "error");
@@ -165,6 +182,13 @@ function PdfEditor() {
       })
       .catch(() => {
         if (!cancelled) setSavedCount(0);
+      });
+    getEditedPdfInfo()
+      .then((info) => {
+        if (!cancelled) setEditedInfo(info);
+      })
+      .catch(() => {
+        if (!cancelled) setEditedInfo(null);
       });
     return () => {
       cancelled = true;
@@ -382,24 +406,61 @@ function PdfEditor() {
     setPreviewUrl(null);
   }
 
-  async function download() {
+  /** The PDF as it looks now, in the current page order. */
+  async function assemble(): Promise<Uint8Array | null> {
     const libDoc = libDocRef.current;
-    if (!libDoc) return;
+    if (!libDoc) return null;
+    const out = await PDFDocument.create();
+    const copied = await out.copyPages(libDoc, pages.map((p) => p.src));
+    copied.forEach((page) => out.addPage(page));
+    return out.save();
+  }
+
+  function outputName() {
+    const base = docName.replace(/\.pdf$/i, "").replace(/_edited$/i, "") || "document";
+    return `${base}_edited.pdf`;
+  }
+
+  /** Stores the PDF in the student's account, replacing their last one. */
+  async function storeInAccount(bytes: Uint8Array): Promise<boolean> {
+    try {
+      await saveEditedPdf(bytes, outputName(), pages.length);
+      setEditedInfo(await getEditedPdfInfo().catch(() => null));
+      return true;
+    } catch (err) {
+      flash(err instanceof Error ? err.message : "Couldn't save your PDF.", "error");
+      return false;
+    }
+  }
+
+  async function saveToAccount() {
+    setBusy("Saving to your account...");
+    try {
+      const bytes = await assemble();
+      if (bytes && (await storeInAccount(bytes))) flash("Saved. It replaces your previous saved PDF.");
+    } catch {
+      flash("Couldn't prepare the PDF. Please try again.", "error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function download() {
     setBusy("Preparing your PDF...");
     try {
-      const out = await PDFDocument.create();
-      const copied = await out.copyPages(libDoc, pages.map((p) => p.src));
-      copied.forEach((page) => out.addPage(page));
-      const bytes = await out.save();
+      const bytes = await assemble();
+      if (!bytes) return;
       const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: "application/pdf" }));
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${docName.replace(/\.pdf$/i, "") || "document"}${dirty ? "_edited" : ""}.pdf`;
+      a.download = outputName();
       document.body.appendChild(a);
       a.click();
       a.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 2000);
-      flash("Download started.");
+      // Every downloaded version is also kept in the student's account.
+      setBusy("Saving a copy to your account...");
+      if (await storeInAccount(bytes)) flash("Downloaded and saved to your account.");
     } catch {
       flash("Couldn't prepare the PDF. Please try again.", "error");
     } finally {
@@ -429,7 +490,7 @@ function PdfEditor() {
           <h1 className="text-[28px] font-semibold tracking-tight text-surface-950">Edit PDF</h1>
           <p className="mt-1 text-sm text-surface-600">
             {source
-              ? `${docName} · ${pages.length} ${pages.length === 1 ? "page" : "pages"}${source === "saved" ? " · saved logbook" : ""}`
+              ? `${docName} · ${pages.length} ${pages.length === 1 ? "page" : "pages"}${source === "saved" ? " · saved logbook" : source === "edited" ? " · your saved PDF" : ""}`
               : "Open your saved logbook or upload a PDF, then reorder pages, delete pages or add images."}
           </p>
         </div>
@@ -451,6 +512,15 @@ function PdfEditor() {
             >
               <ImagePlus className="h-4 w-4 text-primary-700" aria-hidden />
               Add image
+            </button>
+            <button
+              type="button"
+              onClick={saveToAccount}
+              disabled={!!busy}
+              className="flex h-10 cursor-pointer items-center gap-2 rounded-xl border border-surface-300 bg-white px-3.5 text-sm font-semibold text-surface-900 hover:bg-surface-50 disabled:opacity-50"
+            >
+              <CloudUpload className="h-4 w-4 text-primary-700" aria-hidden />
+              Save
             </button>
             <button
               type="button"
@@ -481,7 +551,9 @@ function PdfEditor() {
       {!source ? (
         <SourceChooser
           savedCount={savedCount}
+          editedInfo={editedInfo}
           busy={busy}
+          onOpenEdited={openEditedPdf}
           onOpenSaved={openSavedLogbook}
           onChooseFile={() => fileInputRef.current?.click()}
           onDropFile={openUploadedFile}
@@ -604,13 +676,17 @@ function PdfEditor() {
 
 function SourceChooser({
   savedCount,
+  editedInfo,
   busy,
+  onOpenEdited,
   onOpenSaved,
   onChooseFile,
   onDropFile,
 }: {
   savedCount: number | null;
+  editedInfo: EditedPdfInfo | null | undefined;
   busy: string | null;
+  onOpenEdited: () => void;
   onOpenSaved: () => void;
   onChooseFile: () => void;
   onDropFile: (file: File) => void;
@@ -619,7 +695,30 @@ function SourceChooser({
   const hasSaved = (savedCount ?? 0) > 0;
 
   return (
-    <div className="grid gap-4 md:grid-cols-2">
+    <div className="space-y-4">
+      {editedInfo && (
+        <div className="flex flex-wrap items-center gap-4 rounded-3xl bg-white p-5 ring-1 ring-surface-200">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-700">
+            <FileClock className="h-5 w-5" aria-hidden />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-[15px] font-semibold text-surface-950">Continue your saved PDF</h2>
+            <p className="mt-0.5 truncate text-sm text-surface-600">
+              {editedInfo.fileName} · {editedInfo.pageCount} {editedInfo.pageCount === 1 ? "page" : "pages"} · saved{" "}
+              {new Date(editedInfo.updatedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenEdited}
+            disabled={!!busy}
+            className="flex h-11 cursor-pointer items-center rounded-xl bg-primary-700 px-5 text-sm font-semibold text-white hover:bg-primary-800 disabled:opacity-60"
+          >
+            Open
+          </button>
+        </div>
+      )}
+      <div className="grid gap-4 md:grid-cols-2">
       <div className="flex flex-col rounded-3xl bg-primary-950 p-7 text-white">
         <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/10 ring-1 ring-inset ring-white/15">
           <BookCheck className="h-5 w-5" aria-hidden />
@@ -690,6 +789,7 @@ function SourceChooser({
             Choose PDF
           </button>
         </div>
+      </div>
       </div>
     </div>
   );

@@ -31,30 +31,39 @@ export interface ProfileData {
   email_id?: string;
 }
 
-async function downloadPDFFromAPI(body: any, defaultFilename: string) {
-  const response = await fetch("/api/generate-pdf", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+// The logbook is built in the browser: the filled PDF is ~8 MB, more than a
+// Vercel function may return (4.5 MB). The template is cached after one load.
+let templatePromise: Promise<ArrayBuffer> | null = null;
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || "Failed to generate PDF");
+function loadTemplate(): Promise<ArrayBuffer> {
+  if (!templatePromise) {
+    templatePromise = fetch("/templates/OJT_Logbook.pdf")
+      .then((res) => {
+        if (!res.ok) throw new Error("Couldn't load the logbook template. Please try again.");
+        return res.arrayBuffer();
+      })
+      .catch((err) => {
+        templatePromise = null;
+        throw err;
+      });
   }
+  return templatePromise;
+}
 
-  const blob = await response.blob();
-  const url = window.URL.createObjectURL(blob);
+/** The complete 90-page logbook with the profile and entries stamped in. */
+export async function buildLogbookPdf(profile: ProfileData | undefined, entries: SingleDayData[]): Promise<Uint8Array> {
+  const [{ stampLogbook }, template] = await Promise.all([import("./logbook-stamp"), loadTemplate()]);
+  return stampLogbook(new Uint8Array(template), { mode: "complete", profile, entries });
+}
+
+function pdfBlob(bytes: Uint8Array): Blob {
+  return new Blob([bytes as BlobPart], { type: "application/pdf" });
+}
+
+function downloadBytes(bytes: Uint8Array, filename: string) {
+  const url = window.URL.createObjectURL(pdfBlob(bytes));
   const a = document.createElement("a");
   a.href = url;
-
-  const contentDisposition = response.headers.get("content-disposition");
-  let filename = defaultFilename;
-  if (contentDisposition) {
-    const match = contentDisposition.match(/filename="?([^"]+)"?/);
-    if (match && match[1]) filename = match[1];
-  }
-
   a.download = filename;
   document.body.appendChild(a);
   a.click();
@@ -66,14 +75,7 @@ async function downloadPDFFromAPI(body: any, defaultFilename: string) {
 // Generate official logbook PDF with entries stamped (all 90 pages preserved)
 // ============================================================
 export async function generateSingleDayPDF(data: SingleDayData, profile?: ProfileData) {
-  await downloadPDFFromAPI(
-    {
-      mode: "complete",
-      entries: [data],
-      profile,
-    },
-    "OJT_Complete_Logbook.pdf"
-  );
+  downloadBytes(await buildLogbookPdf(profile, [data]), "OJT_Complete_Logbook.pdf");
 }
 
 // ============================================================
@@ -83,14 +85,7 @@ export async function generateCompleteLogbookPDF(
   profile: ProfileData,
   entries: SingleDayData[]
 ) {
-  await downloadPDFFromAPI(
-    {
-      mode: "complete",
-      profile,
-      entries,
-    },
-    "OJT_Complete_Logbook.pdf"
-  );
+  downloadBytes(await buildLogbookPdf(profile, entries), "OJT_Complete_Logbook.pdf");
 }
 
 // ============================================================
@@ -99,47 +94,16 @@ export async function generateCompleteLogbookPDF(
 export async function generatePDFPreviewBlob(
   entry: SingleDayData,
   profile?: ProfileData,
+  // Kept for callers; the preview is always the complete logbook.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   mode: "single" | "complete" = "complete"
 ): Promise<string> {
-  const response = await fetch("/api/generate-pdf", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      mode: "complete",
-      entry,
-      entries: [entry],
-      profile,
-      preview: true,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error("Failed to generate PDF preview");
-  }
-
-  const blob = await response.blob();
-  return window.URL.createObjectURL(blob);
+  return window.URL.createObjectURL(pdfBlob(await buildLogbookPdf(profile, [entry])));
 }
 
 export async function generateCompleteLogbookPreviewBlob(
   profile: ProfileData,
   entries: SingleDayData[]
 ): Promise<string> {
-  const response = await fetch("/api/generate-pdf", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      mode: "complete",
-      profile,
-      entries,
-      preview: true,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error("Failed to generate complete logbook preview");
-  }
-
-  const blob = await response.blob();
-  return window.URL.createObjectURL(blob);
+  return window.URL.createObjectURL(pdfBlob(await buildLogbookPdf(profile, entries)));
 }

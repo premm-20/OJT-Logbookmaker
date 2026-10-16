@@ -92,7 +92,7 @@ export async function findUserForNeonUser(neonUser: NeonUser): Promise<UserRecor
 
 /**
  * The account ID to use for a new student. If the old portal already saved a
- * profile or logins under this email, reuse that ID so the data stays theirs.
+ * profile under this email, reuse that ID so the data stays theirs.
  */
 async function idForNewStudent(neonUser: NeonUser): Promise<string> {
   const sql = getDb();
@@ -102,12 +102,6 @@ async function idForNewStudent(neonUser: NeonUser): Promise<string> {
     `;
     const fromProfile = String(profile[0]?.user_id || "");
     if (fromProfile && !(await selectOne("id", fromProfile))) return fromProfile;
-
-    const login = await sql`
-      SELECT user_id FROM user_logins WHERE lower(email) = ${neonUser.email} ORDER BY login_at ASC LIMIT 1
-    `;
-    const fromLogin = String(login[0]?.user_id || "");
-    if (fromLogin && !(await selectOne("id", fromLogin))) return fromLogin;
   } catch (err) {
     console.warn("[auth] Legacy account lookup skipped:", err);
   }
