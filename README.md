@@ -14,6 +14,7 @@ AI-powered form filling for your OJT (On-the-Job Training) logbook. Paste your d
 - **A4 PDF Generation** — Professional OJT logbook format with auto page breaks
 - **Complete Logbook** — Combine all entries into a single PDF
 - **Student Profile** — One-time setup for the logbook cover page
+- **Guest mode** — `/try` generates a logbook from a PRD without an account; nothing is stored, and guests get 5 generations per hour per IP
 - **Supervisor Feedback** — Monthly performance assessments with 10 rating criteria
 - **Dashboard** — Calendar view with CRUD operations (View, Edit, Delete, Duplicate)
 - **Accounts** — Sign up and sign in with a university email + password (email verified by a 6-digit code), or with the university Google account. Password reset by email code.
@@ -253,6 +254,10 @@ and the next key takes over. Gemini keys are tried first, then OpenRouter.
    Only models ending in `:free` are used (the app ignores any other and sends a
    $0 max price), so you are never charged. The account allows 50 free requests a day,
    or 1000 a day after a one-time $10 credit purchase.
+   Logbooks are written in 8-day chunks at the same time, so even 76 days take
+   about 15-25 seconds. The fast "lite" Gemini models are always used as
+   fallbacks after any you configure, because Google sometimes reports a model
+   as overloaded (503).
 3. Add them to `.env.local` (and Vercel) as comma-separated lists:
    `GEMINI_API_KEYS`, `OPENROUTER_API_KEYS`, and optionally `GEMINI_MODELS` /
    `OPENROUTER_MODELS`. The old single-key names still work.

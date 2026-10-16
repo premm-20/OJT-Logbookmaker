@@ -1,6 +1,7 @@
 import { AiBusyError, generateWithPool, hasAiKeys } from "@/lib/ai";
 import { NextResponse } from "next/server";
-import { getSession, unauthorized } from "@/lib/auth/session";
+import { clientIp, getSession } from "@/lib/auth/session";
+import { rateLimit } from "@/lib/auth/rate-limit";
 import type { ExtractedDayEntry } from "@/lib/types";
 
 // This route only does AI generation — file text is extracted client-side.
@@ -61,14 +62,35 @@ function formatDateReadable(d: Date): string {
 // ─────────────────────────────────────────────────────────────
 // AI generation prompt
 // ─────────────────────────────────────────────────────────────
+// The whole internship follows one arc. Each chunk of days is written
+// separately (in parallel), so every chunk is told where it sits in the arc.
+const PHASES: { until: number; focus: string }[] = [
+  { until: 0.08, focus: "orientation, reading the PRD and architecture review, environment setup" },
+  { until: 0.2, focus: "requirements breakdown, system and database design, project scaffolding" },
+  { until: 0.65, focus: "implementing the core features from the PRD one by one, in a sensible order" },
+  { until: 0.8, focus: "integration between components, testing and debugging" },
+  { until: 0.92, focus: "performance improvements, security hardening and deployment" },
+  { until: 1.01, focus: "documentation, final review, demo and handover" },
+];
+
+function phaseFor(dayIndex: number, totalDays: number): string {
+  const progress = totalDays <= 1 ? 0 : dayIndex / (totalDays - 1);
+  return (PHASES.find((p) => progress < p.until) || PHASES[PHASES.length - 1]).focus;
+}
+
 function buildGenerationPrompt(
   prdText: string,
   days: Date[],
+  firstIndex: number,
+  totalDays: number,
   department: string,
   designation: string
 ): string {
   const dateList = days
-    .map((d, i) => `Day ${i + 1} — ${formatDateReadable(d)} (${formatDateDDMMYYYY(d)})`)
+    .map((d, i) => {
+      const n = firstIndex + i;
+      return `Day ${n + 1} of ${totalDays} — ${formatDateReadable(d)} (${formatDateDDMMYYYY(d)}) — phase: ${phaseFor(n, totalDays)}`;
+    })
     .join("\n");
 
   return `You are an expert OJT (On-the-Job Training) logbook writer.
@@ -82,13 +104,15 @@ PRD / Project Description:
 ${prdText.slice(0, 10000)}
 ---
 
-Generate one complete logbook entry for EACH of the following working days:
+The internship has ${totalDays} working days in total. Write entries ONLY for these ${days.length} days (Day ${firstIndex + 1} to Day ${firstIndex + days.length}), matching each day's phase:
 ${dateList}
+
+Return exactly ${days.length} entries, one per day above, in the same order.
 
 CORE CONTENT GUIDELINES (COMPLETE MEDIUM-BASE LOGBOOK ENTRIES):
 1. ALWAYS write complete, coherent, and grammatical sentences. NEVER truncate sentences, NEVER use trailing ellipses ("..."), and NEVER leave a word or thought unfinished. Every sentence must end with a period.
 2. Provide a balanced "medium base" amount of content: provide full technical context, professional and descriptive, neither too brief nor an overly long essay.
-3. Activities must PROGRESSIVELY build day by day: start with orientation and architecture review → environment setup → design & schema → core feature implementation → testing & debugging → integration → deployment.
+3. Activities must PROGRESSIVELY build day by day and follow each day's phase. Do not repeat orientation or setup outside the first phase.
 4. Each day must feel distinct, realistic, and directly grounded in the PRD content above.
 5. "mySpace": 2 to 3 complete reflective sentences explaining the day's focus, technical insights, and progress (around 180–300 characters total).
 6. "tasksCarriedOutToday": Exactly 3 to 4 complete, descriptive bullet points. Clearly state the exact work performed.
@@ -186,13 +210,45 @@ function parseAIResponse(cleaned: string): ExtractedDayEntry[] {
   });
 }
 
+const GUEST_GENERATIONS_PER_HOUR = 5;
+const CHUNK_DAYS = 8;
+// 76 days is 10 chunks, all written at once.
+const PARALLEL_CHUNKS = 10;
+// Students should have their logbook within a minute.
+const TIME_BUDGET_MS = 55_000;
+export const maxDuration = 60;
+
+/** Runs `fn` over `items`, at most `limit` at a time, keeping the order. */
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 // ─────────────────────────────────────────────────────────────
 // POST — accepts JSON only (text already extracted client-side)
 // ─────────────────────────────────────────────────────────────
 export async function POST(req: Request) {
   try {
-    // Signed-in students only: these routes spend AI / PDF processing time.
-    if (!(await getSession())) return unauthorized();
+    // Guests (no account) may generate too, but a few times per hour per IP,
+    // so they can't use up the AI quota students depend on.
+    if (!(await getSession())) {
+      const limit = rateLimit(`guest-generate:${clientIp(req)}`, GUEST_GENERATIONS_PER_HOUR, 60 * 60 * 1000);
+      if (!limit.ok) {
+        const minutes = Math.max(1, Math.ceil(limit.retryAfterSeconds / 60));
+        return NextResponse.json(
+          { success: false, error: `Guest limit reached. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}, or sign in to keep going.` },
+          { status: 429 }
+        );
+      }
+    }
 
     const body = await req.json();
     const {
@@ -249,11 +305,32 @@ export async function POST(req: Request) {
         { status: 500 }
       );
     }
-    const prompt = buildGenerationPrompt(prdText, workingDays, department, designation);
-    let days = await generateWithPool(
-      { prompt, temperature: 0.7, json: true, label: "generate-from-prd" },
-      parseAIResponse
+    // Short chunks written at the same time: a 76-day logbook takes about
+    // as long as one chunk instead of one very long answer.
+    const chunks: { first: number; days: Date[] }[] = [];
+    for (let i = 0; i < workingDays.length; i += CHUNK_DAYS) {
+      chunks.push({ first: i, days: workingDays.slice(i, i + CHUNK_DAYS) });
+    }
+    const deadline = Date.now() + TIME_BUDGET_MS;
+    const results = await mapWithConcurrency(chunks, PARALLEL_CHUNKS, (chunk) =>
+      generateWithPool(
+        {
+          prompt: buildGenerationPrompt(prdText, chunk.days, chunk.first, workingDays.length, department, designation),
+          temperature: 0.7,
+          json: true,
+          fast: true,
+          deadline,
+          label: "generate-from-prd",
+        },
+        (text) => {
+          const entries = parseAIResponse(text);
+          // A short answer counts as a failure, so the next key or model retries it.
+          if (entries.length < chunk.days.length) throw new Error(`Expected ${chunk.days.length} entries, got ${entries.length}.`);
+          return entries.slice(0, chunk.days.length);
+        }
+      )
     );
+    let days = results.flat();
 
     // Normalise times and dept from request
     days = days.map((d, i) => ({

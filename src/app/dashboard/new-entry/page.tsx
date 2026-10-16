@@ -439,7 +439,7 @@ function FillLogbookForm() {
       if (!prdText.trim()) return { ok: false, error: "The file appears to be empty or could not be read." };
 
       // Step 2: Send plain JSON to the API (no file upload needed)
-      report("generating", "Writing your logbook entries. This can take 20 to 40 seconds; you can open other sections meanwhile.");
+      report("generating", "Writing your logbook entries. This usually takes under a minute; you can open other sections meanwhile.");
       const res = await fetch("/api/generate-from-prd", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

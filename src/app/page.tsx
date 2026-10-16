@@ -1,6 +1,17 @@
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, ClipboardPaste, FileDown, ListChecks, PencilLine, UserRound, MessageSquareText } from "lucide-react";
+import {
+  ArrowRight,
+  CalendarRange,
+  ClipboardPaste,
+  FileDown,
+  FileUp,
+  ListChecks,
+  PencilLine,
+  Sparkles,
+  UserRound,
+  MessageSquareText,
+} from "lucide-react";
 import BrandMark from "@/components/brand-mark";
 import dayPage from "../../public/templates/day_page_bg.png";
 import coverPage from "../../public/templates/page_3_cover.png";
@@ -64,6 +75,12 @@ export default function LandingPage() {
           </Link>
           <div className="flex items-center gap-1 whitespace-nowrap sm:gap-2">
             <Link
+              href="/try"
+              className="hidden h-10 items-center rounded-xl px-3 text-sm font-semibold text-primary-800 hover:bg-primary-50 md:flex md:px-4"
+            >
+              Try without an account
+            </Link>
+            <Link
               href="/login"
               className="flex h-10 items-center rounded-xl px-3 text-sm font-semibold text-surface-700 hover:bg-surface-100 hover:text-surface-950 sm:px-4"
             >
@@ -85,6 +102,15 @@ export default function LandingPage() {
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(60%_60%_at_85%_10%,oklch(0.945_0.028_236)_0%,transparent_70%)]" />
           <div className="relative mx-auto grid max-w-7xl items-center gap-12 px-4 pb-16 pt-12 sm:px-6 md:pt-20 lg:grid-cols-12 lg:gap-8 lg:pb-24">
             <div className="lg:col-span-6 xl:col-span-6">
+              <Link
+                href="/try"
+                className="animate-rise group mb-6 inline-flex items-center gap-2 rounded-full bg-primary-50 py-1 pl-1 pr-3 text-[13px] font-semibold text-primary-800 ring-1 ring-inset ring-primary-200 hover:bg-primary-100"
+                style={{ "--i": 0 } as React.CSSProperties}
+              >
+                <span className="rounded-full bg-primary-700 px-2 py-0.5 text-[11px] text-white">No sign-in</span>
+                Upload a PRD, get the whole logbook
+                <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" aria-hidden />
+              </Link>
               <h1
                 className="animate-rise text-4xl font-semibold leading-[1.05] tracking-tight text-surface-950 md:text-5xl lg:text-6xl"
                 style={{ "--i": 0 } as React.CSSProperties}
@@ -103,19 +129,27 @@ export default function LandingPage() {
                 style={{ "--i": 2 } as React.CSSProperties}
               >
                 <Link
-                  href="/signup"
+                  href="/try"
                   className="group flex h-12 items-center gap-2 rounded-xl bg-primary-700 px-6 text-[15px] font-semibold text-white shadow-[0_8px_24px_-8px_oklch(0.43_0.095_236/0.6),inset_0_1px_0_oklch(1_0_0/0.12)] hover:bg-primary-800"
                 >
-                  Create account
+                  <FileUp className="h-4 w-4" aria-hidden />
+                  Upload your PRD
                   <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
                 </Link>
                 <Link
-                  href="/login"
-                  className="flex h-12 items-center rounded-xl px-5 text-[15px] font-semibold text-primary-800 hover:bg-primary-50"
+                  href="/signup"
+                  className="flex h-12 items-center rounded-xl px-5 text-[15px] font-semibold text-primary-800 ring-1 ring-inset ring-primary-200 hover:bg-primary-50"
                 >
-                  Sign in
+                  Create account
                 </Link>
               </div>
+              <p
+                className="animate-rise mt-3 text-[13px] text-surface-500"
+                style={{ "--i": 3 } as React.CSSProperties}
+              >
+                No sign-in needed to upload a PRD. Nothing is saved until you create an account.
+              </p>
+
             </div>
 
             <div className="relative lg:col-span-6">
@@ -139,6 +173,50 @@ export default function LandingPage() {
                   />
                 </div>
               </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Highlight: PRD upload, no account needed */}
+        <section className="mx-auto max-w-7xl px-4 pb-20 sm:px-6 md:pb-28">
+          <div className="grain relative overflow-hidden rounded-3xl bg-primary-950 px-6 py-10 text-white sm:px-10 md:py-14">
+            <div className="absolute inset-0 bg-[radial-gradient(70%_80%_at_100%_0%,oklch(0.42_0.09_236)_0%,transparent_70%)]" aria-hidden />
+            <div className="relative grid gap-10 lg:grid-cols-12 lg:items-center">
+              <div className="lg:col-span-6">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1 text-[12px] font-semibold text-primary-100 ring-1 ring-inset ring-white/15">
+                  <Sparkles className="h-3.5 w-3.5" aria-hidden />
+                  Fastest way to a full logbook
+                </span>
+                <h2 className="mt-5 max-w-[20ch] text-3xl font-semibold leading-tight tracking-tight md:text-4xl">
+                  Have a PRD? Get every day written in under a minute.
+                </h2>
+                <p className="mt-4 max-w-[48ch] text-[16px] leading-relaxed text-primary-100/80">
+                  Upload your project document and internship dates. Each working day gets its own entry that builds on
+                  the last, printed onto the official template. No account needed.
+                </p>
+                <Link
+                  href="/try"
+                  className="group mt-8 inline-flex h-12 items-center gap-2 rounded-xl bg-white px-6 text-[15px] font-semibold text-primary-900 hover:bg-primary-50"
+                >
+                  <FileUp className="h-4 w-4" aria-hidden />
+                  Upload your PRD
+                  <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                </Link>
+              </div>
+              <ol className="grid gap-3 sm:grid-cols-3 lg:col-span-6">
+                {[
+                  { icon: FileUp, title: "Upload", body: "Your PRD or project description as PDF, DOCX or TXT." },
+                  { icon: CalendarRange, title: "Pick dates", body: "Start and end of your internship. Sundays are skipped." },
+                  { icon: FileDown, title: "Download", body: "Review each day, then download the filled logbook PDF." },
+                ].map((step, i) => (
+                  <li key={step.title} className="rounded-2xl bg-white/[0.06] p-5 ring-1 ring-inset ring-white/10">
+                    <span className="font-mono text-xs text-primary-200">0{i + 1}</span>
+                    <step.icon className="mt-3 h-5 w-5 text-white" aria-hidden />
+                    <h3 className="mt-3 text-[15px] font-semibold">{step.title}</h3>
+                    <p className="mt-1 text-[13px] leading-relaxed text-primary-100/75">{step.body}</p>
+                  </li>
+                ))}
+              </ol>
             </div>
           </div>
         </section>
@@ -261,7 +339,13 @@ export default function LandingPage() {
               <h2 className="text-2xl font-semibold tracking-tight text-surface-950 md:text-3xl">
                 Start with today&apos;s notes.
               </h2>
-              <p className="mt-2 text-[15px] text-surface-600">Sign up with your university Google account or email.</p>
+              <p className="mt-2 text-[15px] text-surface-600">
+                Sign up with your university Google account or email, or{" "}
+                <Link href="/try" className="font-semibold text-primary-700 underline underline-offset-2 hover:text-primary-900">
+                  upload a PRD without an account
+                </Link>
+                .
+              </p>
             </div>
             <Link
               href="/signup"

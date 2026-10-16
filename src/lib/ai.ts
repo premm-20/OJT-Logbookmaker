@@ -31,19 +31,27 @@ export interface AiRequest {
   temperature: number;
   /** Ask Gemini for a JSON response. */
   json?: boolean;
+  /** Skip the model's "thinking" step: much faster for plain writing tasks. */
+  fast?: boolean;
+  /** Give up (AiBusyError) at this time (epoch ms) instead of trying more slots. */
+  deadline?: number;
   /** Short name for logs. */
   label: string;
 }
 
 /** Every slot is resting; the caller should ask the student to retry. */
 export class AiBusyError extends Error {
-  constructor(public retryAfterSeconds: number) {
-    super(`The AI service is busy right now. Please try again in about ${retryAfterSeconds} seconds.`);
+  constructor(public retryAfterSeconds: number, message?: string) {
+    super(message || `The AI service is busy right now. Please try again in about ${retryAfterSeconds} seconds.`);
     this.name = "AiBusyError";
   }
 }
 
-const DEFAULT_GEMINI_MODELS = ["gemini-2.5-flash"];
+// Checked 2026-10-16: the lite models write an 8-day chunk in about 8-12 s.
+// They are always added after any configured models, so a busy model (Google
+// returns 503 when one is overloaded) falls through to the next. Free quota is
+// per model, so more models also means more capacity.
+const DEFAULT_GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash"];
 // Checked 2026-10-16: these returned clean JSON logbook entries at $0.
 const DEFAULT_OPENROUTER_MODELS = [
   "nvidia/nemotron-3.5-super-vl:free",
@@ -66,6 +74,8 @@ const MAX_WAIT_FOR_SLOT_MS = 20_000;
 const RATE_LIMIT_REST_MS = 60_000;
 const NO_CREDIT_REST_MS = 10 * 60_000;
 const BAD_KEY_REST_MS = 60 * 60_000;
+// A model reporting overload (5xx) is skipped briefly rather than hammered.
+const OVERLOADED_REST_MS = 20_000;
 
 // Per server instance. Good enough: each instance learns which keys are spent.
 const restingUntil = new Map<string, number>();
@@ -88,7 +98,7 @@ function buildSlots(): Slot[] {
     );
 
   return [
-    ...pairs("gemini", geminiKeys, geminiModels.length ? geminiModels : DEFAULT_GEMINI_MODELS),
+    ...pairs("gemini", geminiKeys, [...new Set([...geminiModels, ...DEFAULT_GEMINI_MODELS])]),
     ...pairs("openrouter", openrouterKeys, openrouterModels.length ? openrouterModels : DEFAULT_OPENROUTER_MODELS),
   ];
 }
@@ -120,19 +130,22 @@ function retryAfterMs(res: Response): number | undefined {
   return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined;
 }
 
-async function callGemini(slot: Slot, req: AiRequest): Promise<string> {
+async function callGemini(slot: Slot, req: AiRequest, timeoutMs: number): Promise<string> {
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(slot.model)}:generateContent`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": slot.key },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: req.prompt }] }],
         ...(req.system ? { systemInstruction: { parts: [{ text: req.system }] } } : {}),
         generationConfig: {
           temperature: req.temperature,
           ...(req.json ? { responseMimeType: "application/json" } : {}),
+          // Gemini 2.5 Flash thinks by default; turning it off makes it several
+          // times faster. (Lite models don't think by default.)
+          ...(req.fast && /^gemini-2\.5-flash(?!-lite)/i.test(slot.model) ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
         },
       }),
     }
@@ -151,7 +164,7 @@ async function callGemini(slot: Slot, req: AiRequest): Promise<string> {
   return text;
 }
 
-async function callOpenRouter(slot: Slot, req: AiRequest): Promise<string> {
+async function callOpenRouter(slot: Slot, req: AiRequest, timeoutMs: number): Promise<string> {
   const siteUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
     ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
     : "http://localhost:3000";
@@ -163,7 +176,7 @@ async function callOpenRouter(slot: Slot, req: AiRequest): Promise<string> {
       "HTTP-Referer": siteUrl,
       "X-Title": "OJT Logbook Maker",
     },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
     body: JSON.stringify({
       model: slot.model,
       temperature: req.temperature,
@@ -197,7 +210,8 @@ function restFor(err: unknown): number {
   if (err.status === 401 || err.status === 403) return BAD_KEY_REST_MS;
   // Google reports a wrong key as a 400.
   if (err.status === 400 && /API key not valid|API_KEY_INVALID/i.test(err.message)) return BAD_KEY_REST_MS;
-  return 0; // Timeouts, 5xx, bad output: just try the next slot.
+  if (err.status >= 500) return OVERLOADED_REST_MS;
+  return 0; // Timeouts, bad output: just try the next slot.
 }
 
 /** Strips code fences and reasoning tags, and trims prose around the JSON. */
@@ -217,16 +231,22 @@ export async function generateWithPool<T>(req: AiRequest, parse: (text: string) 
   const slots = buildSlots();
   if (!slots.length) throw new Error("No AI API key configured.");
 
-  const deadline = Date.now() + MAX_WAIT_FOR_SLOT_MS;
+  const waitDeadline = Math.min(Date.now() + MAX_WAIT_FOR_SLOT_MS, req.deadline ?? Infinity);
   let lastError: unknown = null;
+  const outOfTime = () =>
+    new AiBusyError(30, "The AI is taking longer than usual right now. Please try again in a minute.");
 
   for (;;) {
     let tried = 0;
     for (const slot of orderedSlots(slots)) {
       if ((restingUntil.get(slot.id) || 0) > Date.now()) continue;
+      const remaining = (req.deadline ?? Infinity) - Date.now();
+      if (remaining < 5_000) throw outOfTime();
       tried++;
       try {
-        const text = slot.provider === "gemini" ? await callGemini(slot, req) : await callOpenRouter(slot, req);
+        const timeoutMs = Math.min(REQUEST_TIMEOUT_MS, remaining);
+        const text =
+          slot.provider === "gemini" ? await callGemini(slot, req, timeoutMs) : await callOpenRouter(slot, req, timeoutMs);
         return parse(cleanJsonText(text));
       } catch (err) {
         lastError = err;
@@ -241,7 +261,10 @@ export async function generateWithPool<T>(req: AiRequest, parse: (text: string) 
     const waitMs = soonest - Date.now();
     if (tried > 0 && waitMs <= 0) break;
     if (waitMs <= 0) continue;
-    if (Date.now() + waitMs > deadline) throw new AiBusyError(Math.ceil(waitMs / 1000));
+    if (Date.now() + waitMs > waitDeadline) {
+      if (req.deadline && Date.now() + waitMs > req.deadline) throw outOfTime();
+      throw new AiBusyError(Math.ceil(waitMs / 1000));
+    }
     await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
 
