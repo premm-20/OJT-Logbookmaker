@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import type { AdminStudentProfile } from "@/app/api/admin/profiles/route";
 import AdminStudentProfiles, { PrdLinks, studentProfilesToCsv } from "@/components/admin-student-profiles";
-import type { AdminPrdUpload } from "@/app/api/admin/prds/route";
+import type { AdminGuest } from "@/app/api/admin/guests/route";
 
 export default function AdminPage() {
   // Authentication states
@@ -38,7 +38,7 @@ export default function AdminPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [students, setStudents] = useState<AdminStudentProfile[]>([]);
-  const [guestPrds, setGuestPrds] = useState<AdminPrdUpload[]>([]);
+  const [guests, setGuests] = useState<AdminGuest[]>([]);
 
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -65,7 +65,7 @@ export default function AdminPage() {
     setError(null);
 
     try {
-      const [res, prdRes] = await Promise.all([fetch("/api/admin/profiles"), fetch("/api/admin/prds")]);
+      const [res, prdRes] = await Promise.all([fetch("/api/admin/profiles"), fetch("/api/admin/guests")]);
 
       if (res.status === 401) {
         setIsAuthenticated(false);
@@ -81,7 +81,7 @@ export default function AdminPage() {
 
       setIsAuthenticated(true);
       setStudents(data.students || []);
-      if (prdRes.ok) setGuestPrds((await prdRes.json()).uploads || []);
+      if (prdRes.ok) setGuests((await prdRes.json()).guests || []);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error connecting to server.";
       setError(msg);
@@ -155,6 +155,16 @@ export default function AdminPage() {
       ].some((v) => (v || "").toLowerCase().includes(q))
     );
   }, [students, searchQuery]);
+
+  const filteredGuests = useMemo(() => {
+    if (!searchQuery.trim()) return guests;
+    const q = searchQuery.toLowerCase().trim();
+    return guests.filter((g) =>
+      [g.name, g.email, g.details.registration_number, g.details.program_name, g.details.industry_partner_name, g.prd?.fileName].some((v) =>
+        (v || "").toLowerCase().includes(q)
+      )
+    );
+  }, [guests, searchQuery]);
 
   // Export the active tab to CSV
   function handleExportCSV() {
@@ -483,28 +493,58 @@ export default function AdminPage() {
 
       </div>
 
-      {/* PRDs uploaded without an account */}
+      {/* Guests: used the no-login page with name + university email */}
       <div className="bg-white rounded-3xl border border-surface-200 shadow-sm overflow-hidden">
         <div className="p-4 sm:p-5 border-b border-surface-200 bg-surface-50/50">
-          <h2 className="text-sm font-bold text-surface-900">Guest uploads ({guestPrds.length})</h2>
-          <p className="mt-0.5 text-xs text-surface-500">PRDs uploaded on the no-account page, newest first.</p>
+          <h2 className="text-sm font-bold text-surface-900">Guest users ({filteredGuests.length})</h2>
+          <p className="mt-0.5 text-xs text-surface-500">
+            People who used the no-login page. Each keeps one PRD; everything is deleted 7 days after their last use.
+          </p>
         </div>
-        {guestPrds.length === 0 ? (
-          <p className="px-5 py-10 text-center text-sm text-surface-500">No guest uploads yet.</p>
-        ) : (
-          <ul className="divide-y divide-surface-100">
-            {guestPrds.map((u) => (
-              <li key={u.id} className="px-5 py-4">
-                <PrdLinks
-                  id={u.id}
-                  hasFile={u.hasFile}
-                  label={`${u.fileName} · ${u.hasFile ? `${(u.sizeBytes / 1024).toFixed(0)} KB` : "text only"} · ${formatDateTime(u.uploadedAt)}`}
-                />
-                {u.textPreview && <p className="mt-1.5 line-clamp-2 text-xs text-surface-600">{u.textPreview}</p>}
-              </li>
-            ))}
-          </ul>
-        )}
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-left">
+            <thead>
+              <tr className="border-b border-surface-200 bg-surface-50/60 text-[11px] font-bold uppercase tracking-wider text-surface-500">
+                <th className="px-4 py-3">Guest</th>
+                <th className="px-4 py-3">Registration no.</th>
+                <th className="px-4 py-3">Program / partner</th>
+                <th className="px-4 py-3">OJT period</th>
+                <th className="px-4 py-3">PRD</th>
+                <th className="px-4 py-3">Last active</th>
+                <th className="px-4 py-3">Deleted on</th>
+              </tr>
+            </thead>
+            <tbody className="text-xs text-surface-800">
+              {filteredGuests.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-10 text-center text-sm text-surface-500">No guest users right now.</td>
+                </tr>
+              ) : (
+                filteredGuests.map((g) => (
+                  <tr key={g.email} className="border-b border-surface-100 align-top">
+                    <td className="px-4 py-3.5">
+                      <div className="font-bold text-surface-900">{g.name}</div>
+                      <div className="font-mono text-[11px] text-primary-700">{g.email}</div>
+                    </td>
+                    <td className="px-4 py-3.5 font-mono text-[11px]">{g.details.registration_number || "-"}</td>
+                    <td className="px-4 py-3.5">
+                      <div className="font-medium">{g.details.program_name || "-"}</div>
+                      {g.details.industry_partner_name && <div className="text-[11px] text-surface-500">{g.details.industry_partner_name}</div>}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3.5 text-surface-600">
+                      {g.details.ojt_start_date || g.details.ojt_end_date ? `${g.details.ojt_start_date || "?"} to ${g.details.ojt_end_date || "?"}` : "-"}
+                    </td>
+                    <td className="px-4 py-3.5">
+                      {g.prd ? <PrdLinks id={g.prd.id} hasFile={g.prd.hasFile} label={g.prd.fileName} /> : <span className="text-surface-500">None</span>}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3.5 text-surface-600">{formatDateTime(g.lastActiveAt)}</td>
+                    <td className="whitespace-nowrap px-4 py-3.5 text-surface-600">{formatDateTime(g.expiresAt)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

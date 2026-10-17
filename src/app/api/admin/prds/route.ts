@@ -5,22 +5,7 @@ import { ensurePrdTable } from "@/lib/prd-db";
 
 export const dynamic = "force-dynamic";
 
-export interface AdminPrdUpload {
-  id: string;
-  ownerType: "student" | "guest";
-  userId: string | null;
-  fileName: string;
-  sizeBytes: number;
-  hasFile: boolean;
-  textChars: number;
-  textPreview: string;
-  uploadedAt: string | null;
-}
-
-/**
- * GET                         guest PRD uploads, newest first
- * GET ?id=<id>&as=file|text   download one upload (original file or its text)
- */
+/** GET ?id=<id>&as=file|text: download one stored PRD (original file or its text). */
 export async function GET(request: NextRequest) {
   if (!readAdminToken(request.cookies.get(ADMIN_COOKIE)?.value)) {
     return NextResponse.json({ error: "Unauthorized: Administrator credentials required." }, { status: 401 });
@@ -57,26 +42,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const rows = await sql`
-      SELECT id, owner_type, user_id, file_name, size_bytes, file_data IS NOT NULL AS has_file,
-             length(text_content) AS text_chars, left(text_content, 160) AS text_preview, updated_at
-      FROM prd_uploads
-      WHERE owner_type = 'guest'
-      ORDER BY updated_at DESC
-      LIMIT 500
-    `;
-    const uploads: AdminPrdUpload[] = rows.map((r) => ({
-      id: String(r.id),
-      ownerType: r.owner_type === "student" ? "student" : "guest",
-      userId: r.user_id ? String(r.user_id) : null,
-      fileName: String(r.file_name),
-      sizeBytes: Number(r.size_bytes) || 0,
-      hasFile: Boolean(r.has_file),
-      textChars: Number(r.text_chars) || 0,
-      textPreview: String(r.text_preview || ""),
-      uploadedAt: r.updated_at ? new Date(r.updated_at as string).toISOString() : null,
-    }));
-    return NextResponse.json({ uploads });
+    return NextResponse.json({ error: "Missing id." }, { status: 400 });
   } catch (err) {
     console.error("[admin/prds]", err);
     return NextResponse.json({ error: "Couldn't load PRD uploads." }, { status: 500 });

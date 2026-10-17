@@ -2,14 +2,14 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { clientIp, getSession } from "@/lib/auth/session";
 import { rateLimit } from "@/lib/auth/rate-limit";
+import { isUniversityEmail, normalizeEmail } from "@/lib/auth/config";
 import { ensurePrdTable } from "@/lib/prd-db";
+import { ensureGuestTables, touchGuest } from "@/lib/guest-db";
 import { PRD_MAX_FILE_BYTES, PRD_MAX_TEXT_CHARS } from "@/lib/prd-limits";
-
-const GUEST_ID = /^[A-Za-z0-9-]{8,64}$/;
 
 /**
  * Stores a copy of an uploaded PRD (multipart: file?, text, fileName,
- * guestId). Students keep their latest upload; guests one per browser tab.
+ * guestEmail). Students and guest profiles each keep one PRD: their latest.
  */
 export async function POST(request: Request) {
   try {
@@ -23,9 +23,14 @@ export async function POST(request: Request) {
     const text = String(form.get("text") || "").slice(0, PRD_MAX_TEXT_CHARS);
     const file = form.get("file");
     const fileName = String(form.get("fileName") || (file instanceof File ? file.name : "") || "prd").slice(0, 200);
-    const guestId = String(form.get("guestId") || "");
+    const guestEmail = normalizeEmail(form.get("guestEmail"));
     if (!text.trim() && !(file instanceof File)) return NextResponse.json({ error: "Nothing to store." }, { status: 400 });
-    if (!session && !GUEST_ID.test(guestId)) return NextResponse.json({ error: "Invalid upload." }, { status: 400 });
+    if (!session) {
+      // A guest's PRD belongs to their guest profile, saved just before this.
+      if (!isUniversityEmail(guestEmail)) return NextResponse.json({ error: "Invalid upload." }, { status: 400 });
+      await ensureGuestTables();
+      if (!(await touchGuest(guestEmail))) return NextResponse.json({ error: "Save your details first." }, { status: 409 });
+    }
 
     let bytes: Buffer | null = null;
     let mimeType = "";
@@ -39,12 +44,12 @@ export async function POST(request: Request) {
 
     await ensurePrdTable();
     const sql = getDb();
-    const id = session ? `prd_${session.id}` : `prd_guest_${guestId}`;
+    const id = session ? `prd_${session.id}` : `prd_guest_${guestEmail}`;
     const b64 = bytes ? bytes.toString("base64") : null;
     await sql`
       INSERT INTO prd_uploads (id, owner_type, user_id, guest_id, file_name, mime_type, size_bytes, text_content, file_data)
       VALUES (
-        ${id}, ${session ? "student" : "guest"}, ${session?.id ?? null}, ${session ? null : guestId},
+        ${id}, ${session ? "student" : "guest"}, ${session?.id ?? null}, ${session ? null : guestEmail},
         ${fileName}, ${mimeType}, ${sizeBytes}, ${text},
         decode(${b64}::text, 'base64')
       )

@@ -21,6 +21,7 @@ import { cachePrd, restoreCachedPrd, savePrdCopy } from "@/lib/prd-store";
 import { buildLogbookPdf, type ProfileData, type SingleDayData } from "@/lib/pdf-generator";
 import type { ExtractedDayEntry } from "@/lib/types";
 import { cn, ensureSpecialAchievements } from "@/lib/utils";
+import { isUniversityEmail, normalizeEmail, UNIVERSITY_DOMAIN_LABEL } from "@/lib/auth/config";
 
 /**
  * Guest mode: generate a logbook from a PRD without an account. The PRD is
@@ -52,14 +53,12 @@ type Details = Required<
 >;
 
 const DETAIL_FIELDS: { key: keyof Details; label: string; placeholder: string; type?: string }[] = [
-  { key: "learner_name", label: "Learner name", placeholder: "Your full name" },
   { key: "registration_number", label: "Registration no.", placeholder: "e.g. REG-2026-001" },
   { key: "program_name", label: "Program", placeholder: "e.g. B.Tech Computer Science" },
   { key: "semester", label: "Semester", placeholder: "e.g. 6th Semester" },
   { key: "location", label: "Location", placeholder: "e.g. Bengaluru" },
   { key: "industry_partner_name", label: "Industry partner", placeholder: "Company name" },
   { key: "phone_number", label: "Phone", placeholder: "e.g. +91 98765 43210", type: "tel" },
-  { key: "email_id", label: "Email", placeholder: "you@example.com", type: "email" },
 ];
 
 const EMPTY_DETAILS: Details = {
@@ -72,6 +71,9 @@ const EMPTY_DETAILS: Details = {
   phone_number: "",
   email_id: "",
 };
+
+// Name and email are remembered for this tab only.
+const IDENTITY_KEY = "ojt_guest_identity";
 
 const join = (v: string[] | string | undefined, sep = "\n") => (Array.isArray(v) ? v.filter(Boolean).join(sep) : v || "");
 
@@ -87,6 +89,9 @@ const inputClass =
 const labelClass = "mb-1.5 block text-[13px] font-medium text-surface-700";
 
 export default function TryPage() {
+  const [guestName, setGuestName] = useState("");
+  const [guestEmail, setGuestEmail] = useState("");
+  const [identityErrors, setIdentityErrors] = useState<{ name?: string; email?: string }>({});
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [startDate, setStartDate] = useState("");
@@ -108,11 +113,22 @@ export default function TryPage() {
 
   const running = status === "reading" || status === "writing";
 
-  // Bring back the PRD picked earlier in this tab (kept until the tab closes).
+  // Bring back the PRD, name and email from earlier in this tab.
   useEffect(() => {
     let cancelled = false;
     restoreCachedPrd().then((cached) => {
       if (cached && !cancelled) setFile((current) => current ?? cached);
+    });
+    Promise.resolve().then(() => {
+      try {
+        const saved = JSON.parse(sessionStorage.getItem(IDENTITY_KEY) || "null") as { name?: string; email?: string } | null;
+        if (saved && !cancelled) {
+          setGuestName((v) => v || saved.name || "");
+          setGuestEmail((v) => v || saved.email || "");
+        }
+      } catch {
+        // Storage blocked: start empty.
+      }
     });
     return () => {
       cancelled = true;
@@ -147,6 +163,16 @@ export default function TryPage() {
   }
 
   async function generate() {
+    const name = guestName.trim().replace(/\s+/g, " ");
+    const email = normalizeEmail(guestEmail);
+    const idErrors: typeof identityErrors = {};
+    if (name.length < 2) idErrors.name = "Enter your full name.";
+    if (!isUniversityEmail(email)) idErrors.email = `Use your ${UNIVERSITY_DOMAIN_LABEL} email.`;
+    setIdentityErrors(idErrors);
+    if (Object.keys(idErrors).length) {
+      document.getElementById("step-you")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return setError("Add your name and university email first.");
+    }
     if (!file) return setError("Upload your PRD or project description first.");
     if (!startDate || !endDate) return setError("Choose your internship start and end dates.");
     if (endDate < startDate) return setError("The end date is before the start date.");
@@ -155,9 +181,30 @@ export default function TryPage() {
     setElapsed(0);
     setStatus("reading");
     try {
+      sessionStorage.setItem(IDENTITY_KEY, JSON.stringify({ name, email }));
+    } catch {
+      // Storage blocked: fine.
+    }
+    try {
+      // The guest profile is saved first; the PRD copy is attached to it.
+      const profileRes = await fetch("/api/guest/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          email,
+          details: { ...details, department, designation, ojt_start_date: startDate, ojt_end_date: endDate },
+        }),
+      });
+      if (profileRes.status === 400) {
+        const data = await profileRes.json().catch(() => ({}));
+        if (data.field === "name" || data.field === "email") setIdentityErrors({ [data.field]: data.error });
+        throw new Error(data.error || "Check your name and email.");
+      }
+
       const prdText = await extractTextFromFile(file);
       if (!prdText.trim()) throw new Error("That file looks empty. Try a different file.");
-      void savePrdCopy(file, prdText);
+      if (profileRes.ok) void savePrdCopy(file, prdText, email);
 
       setStatus("writing");
       const res = await fetch("/api/generate-from-prd", {
@@ -204,6 +251,8 @@ export default function TryPage() {
   async function buildPdf(): Promise<Uint8Array> {
     const profile: ProfileData = {
       ...details,
+      learner_name: guestName.trim(),
+      email_id: normalizeEmail(guestEmail),
       ojt_start_date: startDate,
       ojt_end_date: endDate,
       department,
@@ -285,9 +334,56 @@ export default function TryPage() {
           </p>
         </div>
 
-        {/* 1. PRD */}
+        {/* 1. About you */}
+        <section className="rounded-3xl bg-white p-6 ring-1 ring-surface-200 sm:p-7" aria-labelledby="step-you">
+          <StepTitle n={1} id="step-you">About you</StepTitle>
+          <p className="mt-1 text-sm text-surface-600">Printed on the logbook&apos;s cover page.</p>
+          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="g-name" className={labelClass}>Full name</label>
+              <input
+                id="g-name"
+                autoComplete="name"
+                value={guestName}
+                placeholder="As printed on your ID card"
+                aria-invalid={!!identityErrors.name}
+                onChange={(e) => {
+                  setGuestName(e.target.value);
+                  setIdentityErrors((prev) => ({ ...prev, name: undefined }));
+                }}
+                className={cn(inputClass, identityErrors.name && "border-danger")}
+              />
+              {identityErrors.name && <p className="mt-1.5 text-[13px] font-medium text-[oklch(0.45_0.16_25)]">{identityErrors.name}</p>}
+            </div>
+            <div>
+              <label htmlFor="g-email" className={labelClass}>University email</label>
+              <input
+                id="g-email"
+                type="email"
+                autoComplete="email"
+                value={guestEmail}
+                placeholder="name@medhaviskillsuniversity.edu.in"
+                aria-invalid={!!identityErrors.email}
+                onChange={(e) => {
+                  setGuestEmail(e.target.value);
+                  setIdentityErrors((prev) => ({ ...prev, email: undefined }));
+                }}
+                onBlur={() => {
+                  const email = normalizeEmail(guestEmail);
+                  if (email && !isUniversityEmail(email)) {
+                    setIdentityErrors((prev) => ({ ...prev, email: `Use your ${UNIVERSITY_DOMAIN_LABEL} email.` }));
+                  }
+                }}
+                className={cn(inputClass, identityErrors.email && "border-danger")}
+              />
+              {identityErrors.email && <p className="mt-1.5 text-[13px] font-medium text-[oklch(0.45_0.16_25)]">{identityErrors.email}</p>}
+            </div>
+          </div>
+        </section>
+
+        {/* 2. PRD */}
         <section className="rounded-3xl bg-white p-6 ring-1 ring-surface-200 sm:p-7" aria-labelledby="step-prd">
-          <StepTitle n={1} id="step-prd">Your PRD or project description</StepTitle>
+          <StepTitle n={2} id="step-prd">Your PRD or project description</StepTitle>
           <input
             ref={inputRef}
             type="file"
@@ -331,7 +427,7 @@ export default function TryPage() {
 
         {/* 2. Dates */}
         <section className="rounded-3xl bg-white p-6 ring-1 ring-surface-200 sm:p-7" aria-labelledby="step-dates">
-          <StepTitle n={2} id="step-dates">Internship dates</StepTitle>
+          <StepTitle n={3} id="step-dates">Internship dates</StepTitle>
           <p className="mt-1 text-sm text-surface-600">One entry is written for every day except Sundays, up to 76 days.</p>
           <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
             <div>
@@ -370,7 +466,7 @@ export default function TryPage() {
             className="flex w-full cursor-pointer items-start justify-between gap-4 text-left"
           >
             <span>
-              <StepTitle n={3} id="step-details">Learner details</StepTitle>
+              <StepTitle n={4} id="step-details">More cover-page details</StepTitle>
               <span className="mt-1 block text-sm text-surface-600">Printed on the logbook&apos;s cover page. Optional.</span>
             </span>
             <ChevronDown className={cn("mt-1 h-5 w-5 shrink-0 text-surface-500 transition-transform", showDetails && "rotate-180")} aria-hidden />
