@@ -1,6 +1,6 @@
-import { AiBusyError, generateWithPool, hasAiKeys } from "@/lib/ai";
+import { AiBusyError, generateWithPool, hasAiKeys, NO_USER_KEY_ERROR, userAiKeyFrom } from "@/lib/ai";
 import { NextResponse } from "next/server";
-import { clientIp, getSession } from "@/lib/auth/session";
+import { clientIp } from "@/lib/auth/client-ip";
 import { rateLimit } from "@/lib/auth/rate-limit";
 import type { ExtractedDayEntry } from "@/lib/types";
 
@@ -220,7 +220,7 @@ function parseAIResponse(cleaned: string): ExtractedDayEntry[] {
   });
 }
 
-const GUEST_GENERATIONS_PER_HOUR = 5;
+const GENERATIONS_PER_HOUR = 20;
 const CHUNK_DAYS = 8;
 // 76 days is 10 chunks, all written at once.
 const PARALLEL_CHUNKS = 10;
@@ -247,17 +247,18 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T)
 // ─────────────────────────────────────────────────────────────
 export async function POST(req: Request) {
   try {
-    // Guests (no account) may generate too, but a few times per hour per IP,
-    // so they can't use up the AI quota students depend on.
-    if (!(await getSession())) {
-      const limit = rateLimit(`guest-generate:${clientIp(req)}`, GUEST_GENERATIONS_PER_HOUR, 60 * 60 * 1000);
-      if (!limit.ok) {
-        const minutes = Math.max(1, Math.ceil(limit.retryAfterSeconds / 60));
-        return NextResponse.json(
-          { success: false, error: `Guest limit reached. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.` },
-          { status: 429 }
-        );
-      }
+    // Server keys by default; a key pasted in the API key box takes over.
+    const userKey = userAiKeyFrom(req);
+    if (!hasAiKeys(userKey)) return NextResponse.json({ success: false, error: NO_USER_KEY_ERROR }, { status: 400 });
+
+    // The key is the user's, but generation still uses server time.
+    const limit = rateLimit(`generate:${clientIp(req)}`, GENERATIONS_PER_HOUR, 60 * 60 * 1000);
+    if (!limit.ok) {
+      const minutes = Math.max(1, Math.ceil(limit.retryAfterSeconds / 60));
+      return NextResponse.json(
+        { success: false, error: `Too many logbooks this hour. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.` },
+        { status: 429 }
+      );
     }
 
     const body = await req.json();
@@ -312,12 +313,6 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!hasAiKeys()) {
-      return NextResponse.json(
-        { success: false, error: "No AI API key configured." },
-        { status: 500 }
-      );
-    }
     // Short chunks written at the same time: a 76-day logbook takes about
     // as long as one chunk instead of one very long answer.
     const chunks: { first: number; days: Date[] }[] = [];
@@ -334,6 +329,7 @@ export async function POST(req: Request) {
           fast: true,
           deadline,
           label: "generate-from-prd",
+          userKey,
         },
         (text) => {
           const entries = parseAIResponse(text);
@@ -367,7 +363,12 @@ export async function POST(req: Request) {
   } catch (error: unknown) {
     if (error instanceof AiBusyError) {
       return NextResponse.json(
-        { success: false, error: error.message, retryAfterSeconds: error.retryAfterSeconds },
+        {
+          success: false,
+          // The server keys are spent: say how to keep going right now.
+          error: userAiKeyFrom(req) ? error.message : `${error.message} If your key's limit is reached, paste a new API key in the box at the top.`,
+          retryAfterSeconds: error.retryAfterSeconds,
+        },
         { status: 503 }
       );
     }

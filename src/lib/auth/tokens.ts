@@ -11,6 +11,9 @@ const DEV_FALLBACK_SECRET = "dev-only-insecure-secret-set-AUTH_SECRET-in-env-loc
 export function getAuthSecret(): string {
   const secret = process.env.AUTH_SECRET;
   if (secret && secret.length >= 32) return secret;
+  // No AUTH_SECRET: derive one from the database URL, which is already a server secret.
+  const dbUrl = process.env.DATABASE_URL;
+  if (dbUrl) return crypto.createHash("sha256").update(`ojt-admin-token:${dbUrl}`).digest("base64url");
   if (process.env.NODE_ENV === "production") {
     throw new Error(
       "AUTH_SECRET is missing or shorter than 32 characters. Generate one with `openssl rand -base64 48` and add it to your environment."

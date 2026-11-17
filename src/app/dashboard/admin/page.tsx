@@ -23,11 +23,11 @@ import {
 import type { AdminStudentProfile } from "@/app/api/admin/profiles/route";
 import AdminStudentProfiles, { PrdLinks, studentProfilesToCsv } from "@/components/admin-student-profiles";
 import type { AdminGuest } from "@/app/api/admin/guests/route";
+import AdminSubmissions from "@/components/admin-submissions";
 
 export default function AdminPage() {
   // Authentication states
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
-  const [adminId, setAdminId] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -65,23 +65,21 @@ export default function AdminPage() {
     setError(null);
 
     try {
-      const [res, prdRes] = await Promise.all([fetch("/api/admin/profiles"), fetch("/api/admin/guests")]);
-
-      if (res.status === 401) {
+      // The password session decides access; the student lists are extras
+      // that may be empty now that the site has no student login.
+      const me = await fetch("/api/admin/login", { cache: "no-store" });
+      if (!me.ok) {
         setIsAuthenticated(false);
-        setLoading(false);
-        setRefreshing(false);
         return;
       }
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to load students.");
-      }
-
       setIsAuthenticated(true);
-      setStudents(data.students || []);
-      if (prdRes.ok) setGuests((await prdRes.json()).guests || []);
+
+      const [res, prdRes] = await Promise.all([
+        fetch("/api/admin/profiles").catch(() => null),
+        fetch("/api/admin/guests").catch(() => null),
+      ]);
+      if (res?.ok) setStudents((await res.json()).students || []);
+      if (prdRes?.ok) setGuests((await prdRes.json()).guests || []);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error connecting to server.";
       setError(msg);
@@ -106,10 +104,7 @@ export default function AdminPage() {
       const res = await fetch("/api/admin/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username: adminId,
-          password: adminPassword,
-        }),
+        body: JSON.stringify({ password: adminPassword }),
       });
 
       const data = await res.json();
@@ -243,30 +238,7 @@ export default function AdminPage() {
           )}
 
           <form onSubmit={handleAdminLogin} className="space-y-4.5">
-            {/* Admin ID */}
-            <div>
-              <label className="block text-xs font-bold text-surface-800 uppercase tracking-wider mb-1.5">
-                Admin ID
-              </label>
-              <div className="relative">
-                <UserCheck className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-surface-400" />
-                <input
-                  type="text"
-                  value={adminId}
-                  onChange={(e) => {
-                    setAdminId(e.target.value);
-                    if (authError) setAuthError(null);
-                  }}
-                  placeholder="Enter Admin ID"
-                  required
-                  autoFocus
-                  autoComplete="username"
-                  className="w-full pl-10.5 pr-4 py-3 rounded-2xl border border-surface-200 bg-surface-50/70 text-sm font-semibold text-surface-900 focus:bg-white focus:border-primary-500 focus:outline-none focus:ring-3 focus:ring-primary-500/15 transition-all"
-                />
-              </div>
-            </div>
-
-            {/* Admin Password */}
+            {/* Admin Password (password only, no username) */}
             <div>
               <label className="block text-xs font-bold text-surface-800 uppercase tracking-wider mb-1.5">
                 Admin Password
@@ -282,6 +254,7 @@ export default function AdminPage() {
                   }}
                   placeholder="Enter password"
                   required
+                  autoFocus
                   autoComplete="current-password"
                   className="w-full pl-10.5 pr-11 py-3 rounded-2xl border border-surface-200 bg-surface-50/70 text-sm font-semibold text-surface-900 focus:bg-white focus:border-primary-500 focus:outline-none focus:ring-3 focus:ring-primary-500/15 transition-all"
                 />
@@ -302,7 +275,7 @@ export default function AdminPage() {
             {/* Unlock Button */}
             <button
               type="submit"
-              disabled={authLoading || !adminId.trim() || !adminPassword.trim()}
+              disabled={authLoading || !adminPassword.trim()}
               className="w-full mt-2 py-3.5 rounded-2xl bg-gradient-to-r from-surface-900 via-surface-800 to-surface-950 text-white font-bold text-sm hover:from-black hover:to-surface-900 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-xl shadow-surface-900/20 transition-all cursor-pointer border border-surface-700"
             >
               {authLoading ? (
@@ -492,6 +465,8 @@ export default function AdminPage() {
         <AdminStudentProfiles students={filteredStudents} formatDateTime={formatDateTime} />
 
       </div>
+
+      <AdminSubmissions searchQuery={searchQuery} formatDateTime={formatDateTime} />
 
       {/* Guests: used the no-login page with name + university email */}
       <div className="bg-white rounded-3xl border border-surface-200 shadow-sm overflow-hidden">

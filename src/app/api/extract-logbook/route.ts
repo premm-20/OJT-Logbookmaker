@@ -1,6 +1,7 @@
-import { generateWithPool, hasAiKeys } from "@/lib/ai";
+import { generateWithPool, hasAiKeys, NO_USER_KEY_ERROR, userAiKeyFrom, type UserAiKey } from "@/lib/ai";
 import { NextResponse } from "next/server";
-import { getSession, unauthorized } from "@/lib/auth/session";
+import { clientIp } from "@/lib/auth/client-ip";
+import { rateLimit } from "@/lib/auth/rate-limit";
 import { formatTime, ensureSpecialAchievements } from "@/lib/utils";
 import type { ExtractedDayEntry, ExtractedLogbook } from "@/lib/types";
 
@@ -408,14 +409,14 @@ function fallbackHeuristicClassification(chunk: string): ExtractedLogbook {
   };
 }
 
-async function callAI(text: string): Promise<ExtractedLogbook> {
+async function callAI(text: string, userKey: UserAiKey | null): Promise<ExtractedLogbook> {
   // First check if structured headers exist!
   const structured = parseStructuredSections(text);
   if (structured) {
     return structured;
   }
 
-  if (hasAiKeys()) {
+  {
     try {
       return await generateWithPool(
         {
@@ -428,6 +429,7 @@ ${text}
           temperature: 0.1,
           json: true,
           label: "extract-logbook",
+          userKey,
         },
         (cleaned) => {
           const parsed = JSON.parse(cleaned);
@@ -451,8 +453,11 @@ ${text}
 
 export async function POST(req: Request) {
   try {
-    // Signed-in students only: these routes spend AI / PDF processing time.
-    if (!(await getSession())) return unauthorized();
+    // Server keys by default; a key pasted in the API key box takes over.
+    const userKey = userAiKeyFrom(req);
+    if (!hasAiKeys(userKey)) return NextResponse.json({ success: false, error: NO_USER_KEY_ERROR, data: null, validationWarnings: [] }, { status: 400 });
+    const limit = rateLimit(`extract:${clientIp(req)}`, 60, 60 * 60 * 1000);
+    if (!limit.ok) return NextResponse.json({ success: false, error: "Too many requests this hour. Try again later.", data: null, validationWarnings: [] }, { status: 429 });
 
     const { text } = await req.json();
 
@@ -478,7 +483,7 @@ export async function POST(req: Request) {
       const meta = extractMetadataFromChunk(chunk, defaultDayNum);
 
       try {
-        const classified = await callAI(chunk);
+        const classified = await callAI(chunk, userKey);
 
         // Validate text fragments exist in chunk
         const normalizedChunk = chunk.replace(/\s+/g, " ").trim().toLowerCase();

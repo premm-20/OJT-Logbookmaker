@@ -37,6 +37,8 @@ export interface AiRequest {
   deadline?: number;
   /** Short name for logs. */
   label: string;
+  /** A pasted key; replaces the server's keys for this request. */
+  userKey?: UserAiKey | null;
 }
 
 /** Every slot is resting; the caller should ask the student to retry. */
@@ -94,25 +96,58 @@ function envList(...names: string[]): string[] {
   return [...new Set(values.map((v) => v.trim()).filter(Boolean))];
 }
 
-function buildSlots(): Slot[] {
+/**
+ * Requests run on the server's keys (env) by default. A key pasted in the
+ * API key box (sent in the x-user-ai-key header, never stored) takes over,
+ * e.g. when the server keys have hit their limit.
+ */
+export interface UserAiKey {
+  provider: Provider;
+  key: string;
+}
+
+/** Reads the user's own AI key from the request headers, or null. */
+export function userAiKeyFrom(req: Request): UserAiKey | null {
+  const key = (req.headers.get("x-user-ai-key") || "").trim();
+  if (!key || key.length < 10 || key.length > 300 || /\s/.test(key)) return null;
+  const named = (req.headers.get("x-user-ai-provider") || "").trim().toLowerCase();
+  const provider: Provider = named === "openrouter" || named === "gemini" ? named : key.startsWith("sk-or-") ? "openrouter" : "gemini";
+  return { provider, key };
+}
+
+export const NO_USER_KEY_ERROR = "No AI API key is set up. Paste one in the API key box at the top.";
+
+function buildSlots(userKey?: UserAiKey | null): Slot[] {
+  if (!userKey) return buildServerSlots();
+  const geminiModels = envList("GEMINI_MODELS", "GEMINI_MODEL");
+  const openrouterModels = freeOnly(envList("OPENROUTER_MODELS", "OPENROUTER_MODEL"));
+  // Resting is tracked per key, so one user's spent key never blocks another's.
+  const tag = userKey.key.slice(-6);
+  const models =
+    userKey.provider === "gemini"
+      ? [...new Set([...geminiModels, ...DEFAULT_GEMINI_MODELS])]
+      : openrouterModels.length
+      ? openrouterModels
+      : DEFAULT_OPENROUTER_MODELS;
+  return models.map((model) => ({ id: `${userKey.provider}:${tag}:${model}`, provider: userKey.provider, key: userKey.key, model }));
+}
+
+/** The server's own key pool from env. */
+function buildServerSlots(): Slot[] {
   const geminiKeys = envList("GEMINI_API_KEYS", "GEMINI_API_KEY");
   const geminiModels = envList("GEMINI_MODELS", "GEMINI_MODEL");
   const openrouterKeys = envList("OPENROUTER_API_KEYS", "OPENROUTER_API_KEY");
   const openrouterModels = freeOnly(envList("OPENROUTER_MODELS", "OPENROUTER_MODEL"));
-
   const pairs = (provider: Provider, keys: string[], models: string[]) =>
-    models.flatMap((model) =>
-      keys.map((key, i) => ({ id: `${provider}:${i}:${model}`, provider, key, model }))
-    );
-
+    models.flatMap((model) => keys.map((key, i) => ({ id: `${provider}:${i}:${model}`, provider, key, model })));
   return [
     ...pairs("gemini", geminiKeys, [...new Set([...geminiModels, ...DEFAULT_GEMINI_MODELS])]),
     ...pairs("openrouter", openrouterKeys, openrouterModels.length ? openrouterModels : DEFAULT_OPENROUTER_MODELS),
   ];
 }
 
-export function hasAiKeys(): boolean {
-  return buildSlots().length > 0;
+export function hasAiKeys(userKey?: UserAiKey | null): boolean {
+  return buildSlots(userKey).length > 0;
 }
 
 /** Gemini first, rotated so concurrent requests start on different keys. */
@@ -238,8 +273,8 @@ export function cleanJsonText(text: string): string {
  * accepts. Throws AiBusyError when every slot is rate limited.
  */
 export async function generateWithPool<T>(req: AiRequest, parse: (text: string) => T): Promise<T> {
-  const slots = buildSlots();
-  if (!slots.length) throw new Error("No AI API key configured.");
+  const slots = buildSlots(req.userKey);
+  if (!slots.length) throw new Error(NO_USER_KEY_ERROR);
 
   const waitDeadline = Math.min(Date.now() + MAX_WAIT_FOR_SLOT_MS, req.deadline ?? Infinity);
   let lastError: unknown = null;
@@ -260,6 +295,14 @@ export async function generateWithPool<T>(req: AiRequest, parse: (text: string) 
         return parse(cleanJsonText(text));
       } catch (err) {
         lastError = err;
+        // A wrong key fails on every model: tell the user right away.
+        if (
+          req.userKey &&
+          err instanceof SlotError &&
+          (err.status === 401 || err.status === 403 || (err.status === 400 && /API key not valid|API_KEY_INVALID/i.test(err.message)))
+        ) {
+          throw new Error("Your API key was rejected. Check it on the API key box and paste it again.");
+        }
         const rest = restFor(err);
         if (rest) restingUntil.set(slot.id, Date.now() + rest);
         console.warn(`[ai:${req.label}] ${slot.provider} ${slot.model} failed:`, err instanceof Error ? err.message : err);

@@ -6,6 +6,8 @@ import {
   AlertCircle,
   CheckCircle2,
   ChevronDown,
+  ClipboardPaste,
+  KeyRound,
   Download,
   Eye,
   FileText,
@@ -17,17 +19,35 @@ import {
 } from "lucide-react";
 import BrandMark from "@/components/brand-mark";
 import { extractTextFromFile } from "@/lib/file-extractor";
-import { cachePrd, restoreCachedPrd, savePrdCopy } from "@/lib/prd-store";
+import { cachePrd, restoreCachedPrd } from "@/lib/prd-store";
+import { PRD_MAX_FILE_BYTES } from "@/lib/prd-limits";
+import ApiKeyCard, { useAiKey } from "@/components/api-key-card";
+import { aiKeyHeaders } from "@/lib/user-ai-key";
 import { buildLogbookPdf, type ProfileData, type SingleDayData } from "@/lib/pdf-generator";
 import type { ExtractedDayEntry } from "@/lib/types";
 import { cn, ensureSpecialAchievements } from "@/lib/utils";
-import { isUniversityEmail, normalizeEmail } from "@/lib/auth/config";
+import { normalizeEmail } from "@/lib/auth/config";
 
 /**
- * Guest mode: generate a logbook from a PRD without an account. The PRD is
- * kept for this tab (sessionStorage) and a copy goes to the database; the
- * logbook itself lives only in this page.
+ * No-login logbook maker: write every day from a PRD, or sort pasted daily
+ * notes into the logbook sections. Runs on the user's own AI key. Each request
+ * (details, instructions, PRD or notes) is saved to the database; the logbook
+ * itself lives only in this page.
  */
+
+/** `count` working dates (Mon-Sat) from `start` (YYYY-MM-DD), as DD-MM-YYYY. */
+function workingDates(start: string, count: number): string[] {
+  const [y, m, d] = start.split("-").map(Number);
+  const cur = new Date(y, (m || 1) - 1, d || 1);
+  const out: string[] = [];
+  while (out.length < count && Number.isFinite(cur.getTime())) {
+    if (cur.getDay() !== 0) {
+      out.push(`${String(cur.getDate()).padStart(2, "0")}-${String(cur.getMonth() + 1).padStart(2, "0")}-${cur.getFullYear()}`);
+    }
+    cur.setDate(cur.getDate() + 1);
+  }
+  return out;
+}
 
 interface GuestDay {
   date: string;
@@ -103,6 +123,9 @@ export default function TryPage() {
   const [details, setDetails] = useState<Details>(EMPTY_DETAILS);
   const [showDetails, setShowDetails] = useState(true);
   const [customPrompt, setCustomPrompt] = useState("");
+  const [mode, setMode] = useState<"prd" | "paste">("prd");
+  const [pastedText, setPastedText] = useState("");
+  const aiKey = useAiKey();
 
   const [status, setStatus] = useState<"idle" | "reading" | "writing" | "done">("idle");
   const [elapsed, setElapsed] = useState(0);
@@ -174,9 +197,13 @@ export default function TryPage() {
       document.getElementById("step-you")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return setError("Add your name first.");
     }
-    if (!file) return setError("Upload your PRD or project description first.");
-    if (!startDate || !endDate) return setError("Choose your internship start and end dates.");
-    if (endDate < startDate) return setError("The end date is before the start date.");
+    if (mode === "prd") {
+      if (!file) return setError("Upload your PRD or project description first.");
+      if (!startDate || !endDate) return setError("Choose your internship start and end dates.");
+    } else if (!pastedText.trim()) {
+      return setError("Paste your daily notes first.");
+    }
+    if (startDate && endDate && endDate < startDate) return setError("The end date is before the start date.");
 
     setError("");
     setElapsed(0);
@@ -187,49 +214,43 @@ export default function TryPage() {
       // Storage blocked: fine.
     }
     try {
-      // The guest profile is saved first; the PRD copy is attached to it.
-      // No login: a copy of the details is kept only when a university email
-      // is given, and saving it never blocks generation.
-      const profileOk = isUniversityEmail(email)
-        ? await fetch("/api/guest/profile", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name,
-              email,
-              details: { ...details, department, designation, ojt_start_date: startDate, ojt_end_date: endDate },
-            }),
-          })
-            .then((r) => r.ok)
-            .catch(() => false)
-        : false;
+      const prdText = mode === "prd" && file ? await extractTextFromFile(file) : "";
+      if (mode === "prd" && !prdText.trim()) throw new Error("That file looks empty. Try a different file.");
 
-      const prdText = await extractTextFromFile(file);
-      if (!prdText.trim()) throw new Error("That file looks empty. Try a different file.");
-      if (profileOk) void savePrdCopy(file, prdText, email);
+      // Every request is saved (details, instructions, PRD or notes); saving
+      // never blocks or slows the logbook.
+      void saveSubmission({ name, email, prdText });
 
       setStatus("writing");
-      const res = await fetch("/api/generate-from-prd", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prdText,
-          startDate,
-          endDate,
-          startTime: to12h(startTime),
-          endTime: to12h(endTime),
-          department,
-          designation,
-          customPrompt: customPrompt.trim(),
-        }),
-      });
+      const res =
+        mode === "prd"
+          ? await fetch("/api/generate-from-prd", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...aiKeyHeaders(aiKey) },
+              body: JSON.stringify({
+                prdText,
+                startDate,
+                endDate,
+                startTime: to12h(startTime),
+                endTime: to12h(endTime),
+                department,
+                designation,
+                customPrompt: customPrompt.trim(),
+              }),
+            })
+          : await fetch("/api/extract-logbook", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", ...aiKeyHeaders(aiKey) },
+              body: JSON.stringify({ text: pastedText }),
+            });
       const result = await res.json().catch(() => ({}));
       if (!res.ok || !result.success) throw new Error(result.error || "Couldn't write the logbook. Please try again.");
 
-      const generated: GuestDay[] = (result.days as ExtractedDayEntry[]).map((d) => {
+      const fallbackDates = mode === "paste" && startDate ? workingDates(startDate, (result.days as unknown[]).length) : [];
+      const generated: GuestDay[] = (result.days as ExtractedDayEntry[]).map((d, i) => {
         const tasks = join(d.tasksCarriedOutToday);
         return {
-          date: d.date || "",
+          date: d.date || fallbackDates[i] || "",
           mySpace: join(d.mySpace, " "),
           tasks,
           learnings: join(d.keyLearningObservations),
@@ -237,13 +258,50 @@ export default function TryPage() {
           achievement: ensureSpecialAchievements(join(d.specialAchievements), tasks),
         };
       });
-      if (generated.length === 0) throw new Error("No working days in that range. Try different dates.");
+      if (generated.length === 0) {
+        throw new Error(mode === "prd" ? "No working days in that range. Try different dates." : "Couldn't find any entries in your notes.");
+      }
       setDays(generated);
       setStatus("done");
       window.setTimeout(() => resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
     } catch (err) {
       setStatus("idle");
       setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
+    }
+  }
+
+  async function saveSubmission({ name, email, prdText }: { name: string; email: string; prdText: string }) {
+    try {
+      const form = new FormData();
+      form.set("mode", mode);
+      form.set("name", name);
+      form.set("email", email);
+      form.set(
+        "details",
+        JSON.stringify({
+          ...details,
+          department,
+          designation,
+          ojt_start_date: startDate,
+          ojt_end_date: endDate,
+          start_time: to12h(startTime),
+          end_time: to12h(endTime),
+        })
+      );
+      if (mode === "prd") {
+        form.set("customPrompt", customPrompt.trim());
+        form.set("prdText", prdText);
+        if (file) {
+          form.set("fileName", file.name);
+          // Vercel accepts at most 4.5 MB per request; bigger files keep the text only.
+          if (file.size <= PRD_MAX_FILE_BYTES) form.set("file", file);
+        }
+      } else {
+        form.set("pastedText", pastedText);
+      }
+      await fetch("/api/submissions", { method: "POST", body: form });
+    } catch {
+      // A missing copy must never get in the user's way.
     }
   }
 
@@ -307,15 +365,25 @@ export default function TryPage() {
           <Link href="/" className="rounded-xl" aria-label="OJT Logbook home">
             <BrandMark className="max-[400px]:[&>span:last-child]:hidden" />
           </Link>
+          <Link
+            href="/api-key"
+            className={cn(
+              "flex h-10 items-center gap-1.5 rounded-xl px-3 text-sm font-semibold sm:px-4",
+              aiKey ? "bg-primary-50 text-primary-800 hover:bg-primary-100" : "text-surface-700 hover:bg-surface-100"
+            )}
+          >
+            <KeyRound className="h-4 w-4" aria-hidden />
+            {aiKey ? "Own key in use" : "API key"}
+          </Link>
         </nav>
       </header>
 
       <main id="main" className="mx-auto max-w-3xl space-y-6 px-4 pb-24 pt-10 sm:px-6">
         <div className="animate-fade-in">
-          <h1 className="text-[32px] font-semibold leading-tight tracking-tight text-surface-950">Logbook from your PRD</h1>
+          <h1 className="text-[32px] font-semibold leading-tight tracking-tight text-surface-950">OJT logbook maker</h1>
           <p className="mt-2 max-w-[60ch] text-[15px] leading-relaxed text-surface-600">
-            Upload your project document, pick your internship dates, and get every working day written and printed onto
-            the official logbook. No account needed.
+            Upload your PRD to get every working day written, or paste your own daily notes to have them sorted into the
+            logbook sections. Everything is printed onto the official logbook.
           </p>
           <p className="mt-4 flex items-start gap-2 rounded-xl bg-primary-50 px-3.5 py-3 text-sm text-primary-900 ring-1 ring-inset ring-primary-200">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary-700" aria-hidden />
@@ -324,6 +392,9 @@ export default function TryPage() {
             </span>
           </p>
         </div>
+
+        {/* API key: the user's own, at the top */}
+        <ApiKeyCard id="api-key" />
 
         {/* 1. About you */}
         <section className="rounded-3xl bg-white p-6 ring-1 ring-surface-200 sm:p-7" aria-labelledby="step-you">
@@ -366,9 +437,60 @@ export default function TryPage() {
           </div>
         </section>
 
-        {/* 2. PRD */}
+        {/* 2. Source: PRD + instructions, or pasted notes */}
         <section className="rounded-3xl bg-white p-6 ring-1 ring-surface-200 sm:p-7" aria-labelledby="step-prd">
-          <StepTitle n={2} id="step-prd">Your PRD or project description</StepTitle>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <StepTitle n={2} id="step-prd">{mode === "prd" ? "Your PRD and instructions" : "Paste your daily notes"}</StepTitle>
+            <div className="flex rounded-xl bg-surface-100 p-1" role="tablist" aria-label="How to make the logbook">
+              {(
+                [
+                  ["prd", "Upload PRD", FileUp],
+                  ["paste", "Paste content", ClipboardPaste],
+                ] as const
+              ).map(([id, label, Icon]) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === id}
+                  disabled={running}
+                  onClick={() => {
+                    setMode(id);
+                    setError("");
+                  }}
+                  className={cn(
+                    "flex h-9 cursor-pointer items-center gap-1.5 rounded-lg px-3 text-sm font-semibold transition-colors disabled:cursor-not-allowed",
+                    mode === id ? "bg-white text-primary-800 shadow-sm" : "text-surface-600 hover:text-surface-900"
+                  )}
+                >
+                  <Icon className="h-4 w-4" aria-hidden />
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {mode === "paste" ? (
+            <div className="mt-4">
+              <p className="text-sm text-surface-600">
+                Paste what you did, one day or many (start each with &quot;Day 1&quot;, &quot;Day 2&quot;...). Your sentences are
+                sorted into the logbook sections exactly as you wrote them.
+              </p>
+              <label htmlFor="g-paste" className="sr-only">Daily notes</label>
+              <textarea
+                id="g-paste"
+                rows={10}
+                value={pastedText}
+                disabled={running}
+                placeholder={"Day 1\nReached the office at 9 and joined the team stand-up. Set up the project on my laptop with Node.js and Git. Learned how the codebase is organised. Got the app running locally on day one.\n\nDay 2\n..."}
+                onChange={(e) => setPastedText(e.target.value)}
+                className={cn(inputClass, "mt-3 resize-y leading-relaxed")}
+              />
+            </div>
+          ) : (
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div>
+          <p className={labelClass}>PRD or project description</p>
           <input
             ref={inputRef}
             type="file"
@@ -394,7 +516,7 @@ export default function TryPage() {
             }}
             disabled={running}
             className={cn(
-              "mt-4 flex w-full cursor-pointer items-center gap-4 rounded-2xl border-2 border-dashed p-5 text-left transition-colors disabled:cursor-not-allowed",
+              "flex min-h-[132px] w-full cursor-pointer items-center gap-4 rounded-2xl border-2 border-dashed p-5 text-left transition-colors disabled:cursor-not-allowed",
               dragOver ? "border-primary-500 bg-primary-50" : file ? "border-primary-300 bg-primary-50/40" : "border-surface-300 hover:border-primary-400"
             )}
           >
@@ -408,12 +530,35 @@ export default function TryPage() {
               </span>
             </span>
           </button>
+          </div>
+          <div className="flex flex-col">
+            <label htmlFor="g-prompt" className={labelClass}>
+              Your instructions <span className="font-normal text-surface-500">(optional)</span>
+            </label>
+            <textarea
+              id="g-prompt"
+              rows={5}
+              maxLength={2000}
+              value={customPrompt}
+              disabled={running}
+              placeholder={"Tell the AI what you want in the logbook, e.g.\nMention React, Node.js and MongoDB.\nDays 10 to 15: payment module with Razorpay.\nKeep it in simple English."}
+              onChange={(e) => setCustomPrompt(e.target.value)}
+              className={cn(inputClass, "min-h-[132px] flex-1 resize-y leading-relaxed")}
+            />
+            <p className="mt-1 text-right font-mono text-xs text-surface-500">{customPrompt.length}/2000</p>
+          </div>
+          </div>
+          )}
         </section>
 
-        {/* 2. Dates */}
+        {/* 3. Dates */}
         <section className="rounded-3xl bg-white p-6 ring-1 ring-surface-200 sm:p-7" aria-labelledby="step-dates">
           <StepTitle n={3} id="step-dates">Internship dates</StepTitle>
-          <p className="mt-1 text-sm text-surface-600">One entry is written for every day except Sundays, up to 76 days.</p>
+          <p className="mt-1 text-sm text-surface-600">
+            {mode === "prd"
+              ? "One entry is written for every day except Sundays, up to 76 days."
+              : "Optional. Used for the cover page, and to date any day your notes don't give a date for."}
+          </p>
           <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
             <div>
               <label htmlFor="g-start" className={labelClass}>Start date</label>
@@ -473,27 +618,6 @@ export default function TryPage() {
               ))}
             </div>
           )}
-        </section>
-
-        {/* 5. Custom instructions */}
-        <section className="rounded-3xl bg-white p-6 ring-1 ring-surface-200 sm:p-7" aria-labelledby="step-prompt">
-          <StepTitle n={5} id="step-prompt">Your instructions for the logbook</StepTitle>
-          <p className="mt-1 text-sm text-surface-600">
-            Optional. Tell the AI exactly what you want in the entries: tools to mention, work on specific days, tone,
-            length, things to leave out.
-          </p>
-          <label htmlFor="g-prompt" className="sr-only">Custom instructions</label>
-          <textarea
-            id="g-prompt"
-            rows={5}
-            maxLength={2000}
-            value={customPrompt}
-            disabled={running}
-            placeholder={"e.g. Mention React, Node.js and MongoDB as the main tools.\nDays 10 to 15: worked on the payment module with Razorpay.\nKeep tasks short and in simple English."}
-            onChange={(e) => setCustomPrompt(e.target.value)}
-            className={cn(inputClass, "mt-4 resize-y leading-relaxed")}
-          />
-          <p className="mt-1.5 text-right font-mono text-xs text-surface-500">{customPrompt.length}/2000</p>
         </section>
 
         {/* Generate */}

@@ -2,7 +2,7 @@ import crypto from "crypto";
 import { signToken, verifyToken } from "./tokens";
 
 /**
- * Admin portal auth. Credentials come from ADMIN_USERNAME / ADMIN_PASSWORD;
+ * Admin portal auth: password only (the ADMIN_PASSWORD setting), no username;
  * the cookie holds a signed, expiring token with `typ: "admin"`, so a
  * student session token can never be replayed as an admin token.
  */
@@ -17,12 +17,10 @@ interface AdminPayload {
   exp: number;
 }
 
-/** Null when admin login is not configured, so callers can refuse it. */
-export function getAdminCredentials(): { username: string; password: string } | null {
-  const username = process.env.ADMIN_USERNAME;
-  const password = process.env.ADMIN_PASSWORD;
-  if (!username || !password) return null;
-  return { username, password };
+// The password lives only in the hosting settings (ADMIN_PASSWORD), never in
+// the code, so reading the repository can't get anyone into the admin panel.
+export function getAdminPassword(): string | null {
+  return process.env.ADMIN_PASSWORD?.trim() || null;
 }
 
 // Hash first so timingSafeEqual gets equal-length buffers and the length
@@ -33,15 +31,9 @@ function safeEqual(a: string, b: string): boolean {
   return crypto.timingSafeEqual(ha, hb);
 }
 
-export function checkAdminCredentials(
-  expected: { username: string; password: string },
-  username: string,
-  password: string
-): boolean {
-  // Evaluate both so a wrong username takes as long as a wrong password.
-  const userOk = safeEqual(username, expected.username);
-  const passOk = safeEqual(password, expected.password);
-  return userOk && passOk;
+export function checkAdminPassword(password: string): boolean {
+  const expected = getAdminPassword();
+  return expected !== null && safeEqual(password, expected);
 }
 
 export function createAdminToken(username: string): string {
