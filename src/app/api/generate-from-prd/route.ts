@@ -84,7 +84,8 @@ function buildGenerationPrompt(
   firstIndex: number,
   totalDays: number,
   department: string,
-  designation: string
+  designation: string,
+  customPrompt = ""
 ): string {
   const dateList = days
     .map((d, i) => {
@@ -108,7 +109,16 @@ The internship has ${totalDays} working days in total. Write entries ONLY for th
 ${dateList}
 
 Return exactly ${days.length} entries, one per day above, in the same order.
-
+${
+  customPrompt
+    ? `
+STUDENT'S OWN INSTRUCTIONS (HIGHEST PRIORITY: follow these exactly; they override the guidelines below wherever they conflict, but the JSON format must stay the same. Day numbers refer to the whole internship, so apply day-specific instructions only to the matching days listed above):
+---
+${customPrompt}
+---
+`
+    : ""
+}
 CORE CONTENT GUIDELINES (COMPLETE MEDIUM-BASE LOGBOOK ENTRIES):
 1. ALWAYS write complete, coherent, and grammatical sentences. NEVER truncate sentences, NEVER use trailing ellipses ("..."), and NEVER leave a word or thought unfinished. Every sentence must end with a period.
 2. Provide a balanced "medium base" amount of content: provide full technical context, professional and descriptive, neither too brief nor an overly long essay.
@@ -244,7 +254,7 @@ export async function POST(req: Request) {
       if (!limit.ok) {
         const minutes = Math.max(1, Math.ceil(limit.retryAfterSeconds / 60));
         return NextResponse.json(
-          { success: false, error: `Guest limit reached. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}, or sign in to keep going.` },
+          { success: false, error: `Guest limit reached. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}.` },
           { status: 429 }
         );
       }
@@ -259,6 +269,7 @@ export async function POST(req: Request) {
       endTime = "05:00 PM",
       department = "",
       designation = "",
+      customPrompt: rawCustomPrompt = "",
     } = body as {
       prdText: string;
       startDate: string;
@@ -267,7 +278,9 @@ export async function POST(req: Request) {
       endTime?: string;
       department?: string;
       designation?: string;
+      customPrompt?: string;
     };
+    const customPrompt = typeof rawCustomPrompt === "string" ? rawCustomPrompt.trim().slice(0, 2000) : "";
 
     if (!prdText?.trim()) {
       return NextResponse.json(
@@ -315,7 +328,7 @@ export async function POST(req: Request) {
     const results = await mapWithConcurrency(chunks, PARALLEL_CHUNKS, (chunk) =>
       generateWithPool(
         {
-          prompt: buildGenerationPrompt(prdText, chunk.days, chunk.first, workingDays.length, department, designation),
+          prompt: buildGenerationPrompt(prdText, chunk.days, chunk.first, workingDays.length, department, designation, customPrompt),
           temperature: 0.7,
           json: true,
           fast: true,

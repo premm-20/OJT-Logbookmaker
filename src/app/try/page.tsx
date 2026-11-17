@@ -21,7 +21,7 @@ import { cachePrd, restoreCachedPrd, savePrdCopy } from "@/lib/prd-store";
 import { buildLogbookPdf, type ProfileData, type SingleDayData } from "@/lib/pdf-generator";
 import type { ExtractedDayEntry } from "@/lib/types";
 import { cn, ensureSpecialAchievements } from "@/lib/utils";
-import { isUniversityEmail, normalizeEmail, UNIVERSITY_DOMAIN_LABEL } from "@/lib/auth/config";
+import { isUniversityEmail, normalizeEmail } from "@/lib/auth/config";
 
 /**
  * Guest mode: generate a logbook from a PRD without an account. The PRD is
@@ -102,6 +102,7 @@ export default function TryPage() {
   const [designation, setDesignation] = useState("");
   const [details, setDetails] = useState<Details>(EMPTY_DETAILS);
   const [showDetails, setShowDetails] = useState(true);
+  const [customPrompt, setCustomPrompt] = useState("");
 
   const [status, setStatus] = useState<"idle" | "reading" | "writing" | "done">("idle");
   const [elapsed, setElapsed] = useState(0);
@@ -167,11 +168,11 @@ export default function TryPage() {
     const email = normalizeEmail(guestEmail);
     const idErrors: typeof identityErrors = {};
     if (name.length < 2) idErrors.name = "Enter your full name.";
-    if (!isUniversityEmail(email)) idErrors.email = `Use your ${UNIVERSITY_DOMAIN_LABEL} email.`;
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) idErrors.email = "Enter a valid email, or leave it empty.";
     setIdentityErrors(idErrors);
     if (Object.keys(idErrors).length) {
       document.getElementById("step-you")?.scrollIntoView({ behavior: "smooth", block: "center" });
-      return setError("Add your name and university email first.");
+      return setError("Add your name first.");
     }
     if (!file) return setError("Upload your PRD or project description first.");
     if (!startDate || !endDate) return setError("Choose your internship start and end dates.");
@@ -187,24 +188,25 @@ export default function TryPage() {
     }
     try {
       // The guest profile is saved first; the PRD copy is attached to it.
-      const profileRes = await fetch("/api/guest/profile", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          email,
-          details: { ...details, department, designation, ojt_start_date: startDate, ojt_end_date: endDate },
-        }),
-      });
-      if (profileRes.status === 400) {
-        const data = await profileRes.json().catch(() => ({}));
-        if (data.field === "name" || data.field === "email") setIdentityErrors({ [data.field]: data.error });
-        throw new Error(data.error || "Check your name and email.");
-      }
+      // No login: a copy of the details is kept only when a university email
+      // is given, and saving it never blocks generation.
+      const profileOk = isUniversityEmail(email)
+        ? await fetch("/api/guest/profile", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name,
+              email,
+              details: { ...details, department, designation, ojt_start_date: startDate, ojt_end_date: endDate },
+            }),
+          })
+            .then((r) => r.ok)
+            .catch(() => false)
+        : false;
 
       const prdText = await extractTextFromFile(file);
       if (!prdText.trim()) throw new Error("That file looks empty. Try a different file.");
-      if (profileRes.ok) void savePrdCopy(file, prdText, email);
+      if (profileOk) void savePrdCopy(file, prdText, email);
 
       setStatus("writing");
       const res = await fetch("/api/generate-from-prd", {
@@ -218,6 +220,7 @@ export default function TryPage() {
           endTime: to12h(endTime),
           department,
           designation,
+          customPrompt: customPrompt.trim(),
         }),
       });
       const result = await res.json().catch(() => ({}));
@@ -304,14 +307,6 @@ export default function TryPage() {
           <Link href="/" className="rounded-xl" aria-label="OJT Logbook home">
             <BrandMark className="max-[400px]:[&>span:last-child]:hidden" />
           </Link>
-          <div className="flex items-center gap-1 whitespace-nowrap sm:gap-2">
-            <Link href="/login" className="flex h-10 items-center rounded-xl px-3 text-sm font-semibold text-surface-700 hover:bg-surface-100 sm:px-4">
-              Sign in
-            </Link>
-            <Link href="/signup" className="flex h-10 items-center rounded-xl bg-primary-700 px-4 text-sm font-semibold text-white hover:bg-primary-800">
-              Create account
-            </Link>
-          </div>
         </nav>
       </header>
 
@@ -325,11 +320,7 @@ export default function TryPage() {
           <p className="mt-4 flex items-start gap-2 rounded-xl bg-primary-50 px-3.5 py-3 text-sm text-primary-900 ring-1 ring-inset ring-primary-200">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary-700" aria-hidden />
             <span>
-              Guest logbooks aren&apos;t kept, so download your PDF before closing this page.{" "}
-              <Link href="/signup" className="font-semibold underline underline-offset-2 hover:text-primary-700">
-                Create an account
-              </Link>{" "}
-              to keep your logbook, edit the PDF and add supervisor feedback.
+              No sign-in needed. Logbooks aren&apos;t kept, so download your PDF before closing this page.
             </span>
           </p>
         </div>
@@ -356,7 +347,7 @@ export default function TryPage() {
               {identityErrors.name && <p className="mt-1.5 text-[13px] font-medium text-[oklch(0.45_0.16_25)]">{identityErrors.name}</p>}
             </div>
             <div>
-              <label htmlFor="g-email" className={labelClass}>University email</label>
+              <label htmlFor="g-email" className={labelClass}>Email <span className="font-normal text-surface-500">(optional)</span></label>
               <input
                 id="g-email"
                 type="email"
@@ -367,12 +358,6 @@ export default function TryPage() {
                 onChange={(e) => {
                   setGuestEmail(e.target.value);
                   setIdentityErrors((prev) => ({ ...prev, email: undefined }));
-                }}
-                onBlur={() => {
-                  const email = normalizeEmail(guestEmail);
-                  if (email && !isUniversityEmail(email)) {
-                    setIdentityErrors((prev) => ({ ...prev, email: `Use your ${UNIVERSITY_DOMAIN_LABEL} email.` }));
-                  }
                 }}
                 className={cn(inputClass, identityErrors.email && "border-danger")}
               />
@@ -488,6 +473,27 @@ export default function TryPage() {
               ))}
             </div>
           )}
+        </section>
+
+        {/* 5. Custom instructions */}
+        <section className="rounded-3xl bg-white p-6 ring-1 ring-surface-200 sm:p-7" aria-labelledby="step-prompt">
+          <StepTitle n={5} id="step-prompt">Your instructions for the logbook</StepTitle>
+          <p className="mt-1 text-sm text-surface-600">
+            Optional. Tell the AI exactly what you want in the entries: tools to mention, work on specific days, tone,
+            length, things to leave out.
+          </p>
+          <label htmlFor="g-prompt" className="sr-only">Custom instructions</label>
+          <textarea
+            id="g-prompt"
+            rows={5}
+            maxLength={2000}
+            value={customPrompt}
+            disabled={running}
+            placeholder={"e.g. Mention React, Node.js and MongoDB as the main tools.\nDays 10 to 15: worked on the payment module with Razorpay.\nKeep tasks short and in simple English."}
+            onChange={(e) => setCustomPrompt(e.target.value)}
+            className={cn(inputClass, "mt-4 resize-y leading-relaxed")}
+          />
+          <p className="mt-1.5 text-right font-mono text-xs text-surface-500">{customPrompt.length}/2000</p>
         </section>
 
         {/* Generate */}
