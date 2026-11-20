@@ -35,6 +35,8 @@ export interface AiRequest {
   fast?: boolean;
   /** Give up (AiBusyError) at this time (epoch ms) instead of trying more slots. */
   deadline?: number;
+  /** Longest a single model attempt may take (default REQUEST_TIMEOUT_MS). */
+  attemptTimeoutMs?: number;
   /** Short name for logs. */
   label: string;
   /** A pasted key; replaces the server's keys for this request. */
@@ -289,7 +291,7 @@ export async function generateWithPool<T>(req: AiRequest, parse: (text: string) 
       if (remaining < 5_000) throw outOfTime();
       tried++;
       try {
-        const timeoutMs = Math.min(REQUEST_TIMEOUT_MS, remaining);
+        const timeoutMs = Math.min(req.attemptTimeoutMs ?? REQUEST_TIMEOUT_MS, remaining);
         const text =
           slot.provider === "gemini" ? await callGemini(slot, req, timeoutMs) : await callOpenRouter(slot, req, timeoutMs);
         return parse(cleanJsonText(text));
@@ -321,5 +323,9 @@ export async function generateWithPool<T>(req: AiRequest, parse: (text: string) 
     await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
 
+  // A raw "The operation was aborted due to timeout" means nothing to a user.
+  if (lastError instanceof Error && (lastError.name === "TimeoutError" || lastError.name === "AbortError")) {
+    throw new AiBusyError(20, "The AI took too long to answer. Please try again.");
+  }
   throw lastError instanceof Error ? lastError : new Error("The AI couldn't produce a result. Please try again.");
 }

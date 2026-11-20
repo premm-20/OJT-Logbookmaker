@@ -25,7 +25,7 @@ import ApiKeyCard, { useAiKey } from "@/components/api-key-card";
 import { aiKeyHeaders } from "@/lib/user-ai-key";
 import { buildLogbookPdf, type ProfileData, type SingleDayData } from "@/lib/pdf-generator";
 import type { ExtractedDayEntry } from "@/lib/types";
-import { cn, ensureSpecialAchievements } from "@/lib/utils";
+import { cn, ensureSpecialAchievements, formatDateLong } from "@/lib/utils";
 import { normalizeEmail } from "@/lib/auth/config";
 
 /**
@@ -48,6 +48,26 @@ function workingDates(start: string, count: number): string[] {
   }
   return out;
 }
+
+/** Number of working days (Mon-Sat) from start to end, both YYYY-MM-DD. */
+function countWorkingDays(start: string, end: string): number {
+  const [y1, m1, d1] = start.split("-").map(Number);
+  const [y2, m2, d2] = end.split("-").map(Number);
+  const cur = new Date(y1, m1 - 1, d1);
+  const last = new Date(y2, m2 - 1, d2);
+  let n = 0;
+  while (cur <= last && n < 1000) {
+    if (cur.getDay() !== 0) n++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return n;
+}
+
+// Days per request and requests at a time. Small requests each finish well
+// inside the server's time limit, so a long logbook can't time out.
+const DAYS_PER_REQUEST = 8;
+const PARALLEL_REQUESTS = 3;
+const RETRIES_PER_PART = 2;
 
 interface GuestDay {
   date: string;
@@ -129,6 +149,7 @@ export default function TryPage() {
 
   const [status, setStatus] = useState<"idle" | "reading" | "writing" | "done">("idle");
   const [elapsed, setElapsed] = useState(0);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState("");
   const [days, setDays] = useState<GuestDay[]>([]);
   const [pdfBusy, setPdfBusy] = useState<"download" | "preview" | null>(null);
@@ -199,7 +220,7 @@ export default function TryPage() {
     }
     if (mode === "prd") {
       if (!file) return setError("Upload your PRD or project description first.");
-      if (!startDate || !endDate) return setError("Choose your internship start and end dates.");
+      if (!startDate || !endDate) return setError("Choose your project start and end dates.");
     } else if (!pastedText.trim()) {
       return setError("Paste your daily notes first.");
     }
@@ -222,35 +243,28 @@ export default function TryPage() {
       void saveSubmission({ name, email, prdText });
 
       setStatus("writing");
-      const res =
-        mode === "prd"
-          ? await fetch("/api/generate-from-prd", {
-              method: "POST",
-              headers: { "Content-Type": "application/json", ...aiKeyHeaders(aiKey) },
-              body: JSON.stringify({
-                prdText,
-                startDate,
-                endDate,
-                startTime: to12h(startTime),
-                endTime: to12h(endTime),
-                department,
-                designation,
-                customPrompt: customPrompt.trim(),
-              }),
-            })
-          : await fetch("/api/extract-logbook", {
-              method: "POST",
-              headers: { "Content-Type": "application/json", ...aiKeyHeaders(aiKey) },
-              body: JSON.stringify({ text: pastedText }),
-            });
-      const result = await res.json().catch(() => ({}));
-      if (!res.ok || !result.success) throw new Error(result.error || "Couldn't write the logbook. Please try again.");
+      let resultDays: ExtractedDayEntry[];
+      if (mode === "prd") {
+        const total = countWorkingDays(startDate, endDate);
+        if (total === 0) throw new Error("No working days in that range. Try different dates.");
+        if (total > 76) throw new Error(`Too many days (${total}). Maximum is 76 working days.`);
+        resultDays = await writeInParts(prdText, total);
+      } else {
+        const res = await fetch("/api/extract-logbook", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...aiKeyHeaders(aiKey) },
+          body: JSON.stringify({ text: pastedText }),
+        });
+        const result = await res.json().catch(() => ({}));
+        if (!res.ok || !result.success) throw new Error(result.error || "Couldn't sort your notes. Please try again.");
+        resultDays = result.days as ExtractedDayEntry[];
+      }
 
-      const fallbackDates = mode === "paste" && startDate ? workingDates(startDate, (result.days as unknown[]).length) : [];
-      const generated: GuestDay[] = (result.days as ExtractedDayEntry[]).map((d, i) => {
+      const fallbackDates = mode === "paste" && startDate ? workingDates(startDate, resultDays.length) : [];
+      const generated: GuestDay[] = resultDays.map((d, i) => {
         const tasks = join(d.tasksCarriedOutToday);
         return {
-          date: d.date || fallbackDates[i] || "",
+          date: formatDateLong(d.date || fallbackDates[i] || ""),
           mySpace: join(d.mySpace, " "),
           tasks,
           learnings: join(d.keyLearningObservations),
@@ -268,6 +282,60 @@ export default function TryPage() {
       setStatus("idle");
       setError(err instanceof Error ? err.message : "Something went wrong. Please try again.");
     }
+  }
+
+  /** Writes the logbook a few days per request, retrying any part that fails. */
+  async function writeInParts(prdText: string, total: number): Promise<ExtractedDayEntry[]> {
+    const parts: number[] = [];
+    for (let i = 0; i < total; i += DAYS_PER_REQUEST) parts.push(i);
+    const results: ExtractedDayEntry[][] = new Array(parts.length);
+    let doneDays = 0;
+    setProgress({ done: 0, total });
+
+    async function writePart(chunkStart: number): Promise<ExtractedDayEntry[]> {
+      let lastError = "Couldn't write the logbook. Please try again.";
+      for (let attempt = 0; attempt <= RETRIES_PER_PART; attempt++) {
+        if (attempt > 0) await new Promise((r) => setTimeout(r, 2000 * attempt));
+        try {
+          const res = await fetch("/api/generate-from-prd", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...aiKeyHeaders(aiKey) },
+            body: JSON.stringify({
+              prdText,
+              startDate,
+              endDate,
+              startTime: to12h(startTime),
+              endTime: to12h(endTime),
+              department,
+              designation,
+              customPrompt: customPrompt.trim(),
+              chunkStart,
+              chunkSize: DAYS_PER_REQUEST,
+            }),
+          });
+          const result = await res.json().catch(() => ({}));
+          if (res.ok && result.success) return result.days as ExtractedDayEntry[];
+          lastError = result.error || lastError;
+          // Bad input or no key won't get better by retrying.
+          if (res.status === 400 || res.status === 429) break;
+        } catch {
+          lastError = "Lost the connection while writing. Please try again.";
+        }
+      }
+      throw new Error(lastError);
+    }
+
+    let next = 0;
+    async function worker() {
+      while (next < parts.length) {
+        const i = next++;
+        results[i] = await writePart(parts[i]);
+        doneDays += results[i].length;
+        setProgress({ done: doneDays, total });
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(PARALLEL_REQUESTS, parts.length) }, worker));
+    return results.flat();
   }
 
   async function saveSubmission({ name, email, prdText }: { name: string; email: string; prdText: string }) {
@@ -553,7 +621,7 @@ export default function TryPage() {
 
         {/* 3. Dates */}
         <section className="rounded-3xl bg-white p-6 ring-1 ring-surface-200 sm:p-7" aria-labelledby="step-dates">
-          <StepTitle n={3} id="step-dates">Internship dates</StepTitle>
+          <StepTitle n={3} id="step-dates">Project dates</StepTitle>
           <p className="mt-1 text-sm text-surface-600">
             {mode === "prd"
               ? "One entry is written for every day except Sundays, up to 76 days."
@@ -582,7 +650,7 @@ export default function TryPage() {
             </div>
             <div className="col-span-2">
               <label htmlFor="g-desig" className={labelClass}>Designation</label>
-              <input id="g-desig" value={designation} placeholder="e.g. Software Development Intern" onChange={(e) => setDesignation(e.target.value)} className={inputClass} />
+              <input id="g-desig" value={designation} placeholder="e.g. Project Developer" onChange={(e) => setDesignation(e.target.value)} className={inputClass} />
             </div>
           </div>
         </section>
@@ -633,7 +701,11 @@ export default function TryPage() {
           </button>
           {running && (
             <p className="text-sm text-surface-600" role="status">
-              {status === "reading" ? "Reading your file..." : `Writing every working day. Usually under a minute. ${elapsed}s`}
+              {status === "reading"
+                ? "Reading your file..."
+                : mode === "prd" && progress
+                ? `Writing your project journey: ${progress.done} of ${progress.total} days done. ${elapsed}s`
+                : `Sorting your notes. ${elapsed}s`}
             </p>
           )}
         </div>

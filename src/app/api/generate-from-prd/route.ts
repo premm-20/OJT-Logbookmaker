@@ -43,11 +43,11 @@ function getWorkingDays(startDate: string, endDate: string): Date[] {
   return days;
 }
 
-function formatDateDDMMYYYY(d: Date): string {
-  const day = String(d.getDate()).padStart(2, "0");
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const y = d.getFullYear();
-  return `${day}-${m}-${y}`;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "01 Sep 2026" */
+function formatDateLong(d: Date): string {
+  return `${String(d.getDate()).padStart(2, "0")} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 }
 
 function formatDateReadable(d: Date): string {
@@ -62,15 +62,16 @@ function formatDateReadable(d: Date): string {
 // ─────────────────────────────────────────────────────────────
 // AI generation prompt
 // ─────────────────────────────────────────────────────────────
-// The whole internship follows one arc. Each chunk of days is written
-// separately (in parallel), so every chunk is told where it sits in the arc.
+// The logbook tells one project journey: the student builds the project in
+// the PRD from the first idea to the final demo. Each chunk of days is written
+// separately (in parallel), so every chunk is told where it sits in the journey.
 const PHASES: { until: number; focus: string }[] = [
-  { until: 0.08, focus: "orientation, reading the PRD and architecture review, environment setup" },
-  { until: 0.2, focus: "requirements breakdown, system and database design, project scaffolding" },
-  { until: 0.65, focus: "implementing the core features from the PRD one by one, in a sensible order" },
-  { until: 0.8, focus: "integration between components, testing and debugging" },
-  { until: 0.92, focus: "performance improvements, security hardening and deployment" },
-  { until: 1.01, focus: "documentation, final review, demo and handover" },
+  { until: 0.08, focus: "studying the PRD, defining the problem, goals and scope, choosing the tech stack, setting up the repository" },
+  { until: 0.2, focus: "requirements breakdown, user flows, system architecture and database design, project scaffolding" },
+  { until: 0.65, focus: "building the core features from the PRD one by one, in a sensible order, each day finishing a concrete piece" },
+  { until: 0.8, focus: "connecting the modules end to end, testing, and fixing the bugs found" },
+  { until: 0.92, focus: "improving performance, security and the user interface, then deploying the project" },
+  { until: 1.01, focus: "documentation, final review, project demo and wrap-up" },
 ];
 
 function phaseFor(dayIndex: number, totalDays: number): string {
@@ -90,63 +91,62 @@ function buildGenerationPrompt(
   const dateList = days
     .map((d, i) => {
       const n = firstIndex + i;
-      return `Day ${n + 1} of ${totalDays} — ${formatDateReadable(d)} (${formatDateDDMMYYYY(d)}) — phase: ${phaseFor(n, totalDays)}`;
+      return `Day ${n + 1} of ${totalDays} — ${formatDateReadable(d)} — stage: ${phaseFor(n, totalDays)}`;
     })
     .join("\n");
 
-  return `You are an expert OJT (On-the-Job Training) logbook writer.
+  return `You write the daily project journal of a student who is building the project described in the PRD below, from the first idea to the finished product.
 
-Given the following PRD / project description, write realistic, detailed, and professional OJT logbook entries for an engineering intern.
-Department: ${department || "Software Development"}
-Designation: ${designation || "Software Development Intern"}
+This is a PROJECT JOURNEY, not a job. The student is the one designing and building this project. Never write about joining a company, an office, a team induction, a manager assigning work, HR, or "my internship". Write about the project itself: what was planned, built, tested and improved each day.
+Area: ${department || "Software Development"}
+Role: ${designation || "Project Developer"}
 
 PRD / Project Description:
 ---
 ${prdText.slice(0, 10000)}
 ---
 
-The internship has ${totalDays} working days in total. Write entries ONLY for these ${days.length} days (Day ${firstIndex + 1} to Day ${firstIndex + days.length}), matching each day's phase:
+The project journey has ${totalDays} working days in total. Write entries ONLY for these ${days.length} days (Day ${firstIndex + 1} to Day ${firstIndex + days.length}), matching each day's stage:
 ${dateList}
 
 Return exactly ${days.length} entries, one per day above, in the same order.
 ${
   customPrompt
     ? `
-STUDENT'S OWN INSTRUCTIONS (HIGHEST PRIORITY: follow these exactly; they override the guidelines below wherever they conflict, but the JSON format must stay the same. Day numbers refer to the whole internship, so apply day-specific instructions only to the matching days listed above):
+THE STUDENT'S OWN INSTRUCTIONS (HIGHEST PRIORITY: follow these exactly; they override the guidelines below wherever they conflict, but the JSON format must stay the same. Day numbers refer to the whole journey, so apply day-specific instructions only to the matching days listed above):
 ---
 ${customPrompt}
 ---
 `
     : ""
 }
-CORE CONTENT GUIDELINES (COMPLETE MEDIUM-BASE LOGBOOK ENTRIES):
-1. ALWAYS write complete, coherent, and grammatical sentences. NEVER truncate sentences, NEVER use trailing ellipses ("..."), and NEVER leave a word or thought unfinished. Every sentence must end with a period.
-2. Provide a balanced "medium base" amount of content: provide full technical context, professional and descriptive, neither too brief nor an overly long essay.
-3. Activities must PROGRESSIVELY build day by day and follow each day's phase. Do not repeat orientation or setup outside the first phase.
-4. Each day must feel distinct, realistic, and directly grounded in the PRD content above.
-5. "mySpace": 2 to 3 complete reflective sentences explaining the day's focus, technical insights, and progress (around 180–300 characters total).
-6. "tasksCarriedOutToday": Exactly 3 to 4 complete, descriptive bullet points. Clearly state the exact work performed.
-7. "keyLearningObservations": Exactly 2 to 3 complete bullet points explaining technical takeaways, architectural patterns, or practical lessons learned today.
-8. "toolsTechnologyUsed": 3 to 5 specific tools, libraries, or frameworks used today (e.g. ["Python", "FastAPI", "Docker", "Git"]).
-9. "specialAchievements": Exactly 1 complete sentence highlighting a concrete milestone or achievement completed today.
+WRITING GUIDELINES:
+1. Write in the first person ("I"), in clear, simple, professional English. Every sentence is complete and ends with a period. Never use "...", never cut a sentence short.
+2. Be specific to THIS project: name the real features, screens, modules, APIs, database tables and tools from the PRD. Avoid generic filler such as "worked on the project" or "learned a lot".
+3. The journey moves forward every day. Each day continues from the previous one and finishes something new. Never repeat the same task, wording or learning on two days.
+4. "mySpace": 2 to 3 sentences (about 200 to 300 characters) on what I focused on today, why it mattered for the project, and how far the project moved.
+5. "tasksCarriedOutToday": 3 to 4 bullet points, each one sentence naming exactly what I built, designed, tested or fixed.
+6. "keyLearningObservations": 2 bullet points, each one sentence with a real technical lesson from today's work.
+7. "toolsTechnologyUsed": 3 to 5 specific tools, languages, libraries or services used today, matching the PRD.
+8. "specialAchievements": exactly 1 sentence naming the concrete result reached today.
 
 Return ONLY a valid JSON array — no markdown fences, no explanatory text:
 [
   {
     "dayNumber": 1,
     "date": "YYYY-MM-DD",
-    "mySpace": "Today marked the start of my internship on the project. I focused on understanding the core system requirements and setting up my local development environment with all required tools.",
+    "mySpace": "I started the project by studying the PRD and writing down the problem it solves, the main users and the features for the first version. Fixing the scope early gave me a clear plan for the coming weeks.",
     "tasksCarriedOutToday": [
-      "Attended project orientation and thoroughly reviewed the system requirements document.",
-      "Set up Python development environment including virtual environment and dependencies.",
-      "Cloned the project repository and verified initial project build and test execution."
+      "Read the PRD in detail and listed the core features, user roles and main screens.",
+      "Compared React with Next.js for the frontend and chose Next.js for routing and server rendering.",
+      "Created the Git repository with a clean folder structure and a README describing the project goal."
     ],
     "keyLearningObservations": [
-      "Gained clear understanding of project milestones, architecture, and coding standards.",
-      "Observed how modular folder structure helps maintain scalability across microservices."
+      "Writing the scope down first makes it much easier to plan features in the right order.",
+      "Choosing the stack based on the PRD needs avoids rewriting parts of the project later."
     ],
-    "toolsTechnologyUsed": ["Python", "Git", "VS Code", "Docker"],
-    "specialAchievements": ["Successfully configured development environment and validated initial codebase build."]
+    "toolsTechnologyUsed": ["Next.js", "Git", "GitHub", "VS Code"],
+    "specialAchievements": ["Finalised the project scope and set up the repository that the whole project is built on."]
   }
 ]`;
 }
@@ -224,8 +224,14 @@ const GENERATIONS_PER_HOUR = 20;
 const CHUNK_DAYS = 8;
 // 76 days is 10 chunks, all written at once.
 const PARALLEL_CHUNKS = 10;
-// Students should have their logbook within a minute.
-const TIME_BUDGET_MS = 55_000;
+// Stay inside the 60 s function limit, with room to send the answer.
+const TIME_BUDGET_MS = 50_000;
+// One model attempt may not use the whole budget: a stuck model is dropped
+// and the next one gets a fair chance.
+const ATTEMPT_TIMEOUT_MS = 22_000;
+// The page asks for a few days per request (chunkStart / chunkSize), so no
+// single request has to fit the whole logbook into one function run.
+const MAX_CHUNK_REQUEST_DAYS = 10;
 export const maxDuration = 60;
 
 /** Runs `fn` over `items`, at most `limit` at a time, keeping the order. */
@@ -251,8 +257,10 @@ export async function POST(req: Request) {
     const userKey = userAiKeyFrom(req);
     if (!hasAiKeys(userKey)) return NextResponse.json({ success: false, error: NO_USER_KEY_ERROR }, { status: 400 });
 
-    // The key is the user's, but generation still uses server time.
-    const limit = rateLimit(`generate:${clientIp(req)}`, GENERATIONS_PER_HOUR, 60 * 60 * 1000);
+    // One logbook counts once, however many chunk requests it takes.
+    const peek = (await req.clone().json().catch(() => ({}))) as { chunkStart?: unknown };
+    const countsTowardLimit = !(typeof peek.chunkStart === "number" && peek.chunkStart > 0);
+    const limit = !countsTowardLimit ? { ok: true as const, retryAfterSeconds: 0 } : rateLimit(`generate:${clientIp(req)}`, GENERATIONS_PER_HOUR, 60 * 60 * 1000);
     if (!limit.ok) {
       const minutes = Math.max(1, Math.ceil(limit.retryAfterSeconds / 60));
       return NextResponse.json(
@@ -271,6 +279,8 @@ export async function POST(req: Request) {
       department = "",
       designation = "",
       customPrompt: rawCustomPrompt = "",
+      chunkStart,
+      chunkSize,
     } = body as {
       prdText: string;
       startDate: string;
@@ -280,6 +290,8 @@ export async function POST(req: Request) {
       department?: string;
       designation?: string;
       customPrompt?: string;
+      chunkStart?: number;
+      chunkSize?: number;
     };
     const customPrompt = typeof rawCustomPrompt === "string" ? rawCustomPrompt.trim().slice(0, 2000) : "";
 
@@ -315,9 +327,15 @@ export async function POST(req: Request) {
 
     // Short chunks written at the same time: a 76-day logbook takes about
     // as long as one chunk instead of one very long answer.
+    const isChunk = Number.isInteger(chunkStart) && Number.isInteger(chunkSize) && chunkSize! > 0;
+    const from = isChunk ? Math.max(0, chunkStart!) : 0;
+    const to = isChunk ? Math.min(workingDays.length, from + Math.min(chunkSize!, MAX_CHUNK_REQUEST_DAYS)) : workingDays.length;
+    if (from >= to) {
+      return NextResponse.json({ success: false, error: "That part of the logbook is out of range." }, { status: 400 });
+    }
     const chunks: { first: number; days: Date[] }[] = [];
-    for (let i = 0; i < workingDays.length; i += CHUNK_DAYS) {
-      chunks.push({ first: i, days: workingDays.slice(i, i + CHUNK_DAYS) });
+    for (let i = from; i < to; i += CHUNK_DAYS) {
+      chunks.push({ first: i, days: workingDays.slice(i, Math.min(i + CHUNK_DAYS, to)) });
     }
     const deadline = Date.now() + TIME_BUDGET_MS;
     const results = await mapWithConcurrency(chunks, PARALLEL_CHUNKS, (chunk) =>
@@ -328,6 +346,7 @@ export async function POST(req: Request) {
           json: true,
           fast: true,
           deadline,
+          attemptTimeoutMs: ATTEMPT_TIMEOUT_MS,
           label: "generate-from-prd",
           userKey,
         },
@@ -344,8 +363,8 @@ export async function POST(req: Request) {
     // Normalise times and dept from request
     days = days.map((d, i) => ({
       ...d,
-      dayNumber: i + 1,
-      date: d.date ? formatDateDDMMYYYY(workingDays[i]) : formatDateDDMMYYYY(workingDays[i]),
+      dayNumber: from + i + 1,
+      date: formatDateLong(workingDays[from + i]),
       startTime,
       endTime,
       department: department || d.department || "",
@@ -355,6 +374,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       success: true,
       days,
+      totalDays: workingDays.length,
       isMultiDay: days.length > 1,
       data: days[0] || null,
       detectedDayNumber: 1,

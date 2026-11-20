@@ -1,5 +1,5 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import { formatDateDDMMYYYY } from "@/lib/utils";
+import { formatDateLong } from "@/lib/utils";
 
 /**
  * Stamps a student's profile and daily entries onto the official logbook
@@ -144,7 +144,7 @@ export async function stampLogbook(
       page3.drawText(profile.registration_number, { x: 175, y: height - 583, size: 11, font: fontBold, color: rgb(0.05, 0.05, 0.15) });
     }
     if (profile.ojt_start_date) {
-      const dateStr = formatDateDDMMYYYY(profile.ojt_start_date) || profile.ojt_start_date;
+      const dateStr = formatDateLong(profile.ojt_start_date) || profile.ojt_start_date;
       const dateSize = dateStr.length > 13 ? 9.5 : 10.5;
       page3.drawText(dateStr, { x: 375, y: height - 583, size: dateSize, font: fontBold, color: rgb(0.05, 0.05, 0.15) });
     }
@@ -195,38 +195,38 @@ export async function stampLogbook(
     const yDept = height - 121;
 
     if (entry.date) {
-      const displayDate = formatDateDDMMYYYY(entry.date);
-      page.drawText(displayDate, { x: 86, y: yTop, size: 10.5, font: fontBold, color: rgb(0.05, 0.05, 0.15) });
+      const displayDate = formatDateLong(entry.date);
+      page.drawText(displayDate, { x: 86, y: yTop, size: 11.5, font: fontBold, color: rgb(0.05, 0.05, 0.15) });
     }
     if (entry.startTime) {
       const formattedStart = formatTimeAMPM(entry.startTime);
-      page.drawText(formattedStart, { x: 372, y: yTop, size: 10.5, font: fontBold, color: rgb(0.05, 0.05, 0.15) });
+      page.drawText(formattedStart, { x: 372, y: yTop, size: 11.5, font: fontBold, color: rgb(0.05, 0.05, 0.15) });
     }
     if (entry.endTime) {
       const formattedEnd = formatTimeAMPM(entry.endTime);
-      page.drawText(formattedEnd, { x: 474, y: yTop, size: 10.5, font: fontBold, color: rgb(0.05, 0.05, 0.15) });
+      page.drawText(formattedEnd, { x: 474, y: yTop, size: 11.5, font: fontBold, color: rgb(0.05, 0.05, 0.15) });
     }
     if (entry.department) {
-      page.drawText(entry.department, { x: 128, y: yDept, size: 10, font: fontBold, color: rgb(0.05, 0.05, 0.15) });
+      page.drawText(entry.department, { x: 128, y: yDept, size: 11, font: fontBold, color: rgb(0.05, 0.05, 0.15) });
     }
     if (entry.designation) {
-      page.drawText(entry.designation, { x: 382, y: yDept, size: 10, font: fontBold, color: rgb(0.05, 0.05, 0.15) });
+      page.drawText(entry.designation, { x: 382, y: yDept, size: 11, font: fontBold, color: rgb(0.05, 0.05, 0.15) });
     }
 
     // Box 1: My Space (Clean readable 10.5pt, line-height 14.5, fits comfortably inside vector bounds)
-    drawParagraph(page, entry.mySpace, font, 10.5, 52, height - 186, 485, 14.5, 142);
+    drawParagraph(page, entry.mySpace, font, 12.5, 52, height - 186, 485, 17, 142);
 
     // Box 2: Tasks Carried Out Today
-    drawParagraph(page, entry.tasksCarriedOut, font, 10.5, 52, height - 378, 485, 14.5, 108);
+    drawParagraph(page, entry.tasksCarriedOut, font, 12.5, 52, height - 378, 485, 17, 108);
 
     // Box 3: Key Learnings / Observations
-    drawParagraph(page, entry.keyLearningObservations, font, 10.5, 52, height - 534, 485, 14.5, 60);
+    drawParagraph(page, entry.keyLearningObservations, font, 12.5, 52, height - 534, 485, 17, 60);
 
     // Box 4: Tools, Equipment, Technology or Techniques Used
-    drawParagraph(page, entry.toolsTechnologyUsed, font, 10.5, 52, height - 662, 255, 14.5, 115);
+    drawParagraph(page, entry.toolsTechnologyUsed, font, 12.5, 52, height - 662, 255, 17, 115);
 
     // Box 5: Special Achievements
-    drawParagraph(page, entry.specialAchievements, font, 10.5, 323, height - 662, 218, 14.5, 115);
+    drawParagraph(page, entry.specialAchievements, font, 12.5, 323, height - 662, 218, 17, 115);
 
     if (!pagesToExport.includes(pageIndex)) {
       pagesToExport.push(pageIndex);

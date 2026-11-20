@@ -37,6 +37,19 @@ export function formatDate(dateStr: string): string {
  * Format a date string to "DD-MM-YYYY" format.
  * e.g., "2026-09-03" → "03-09-2026"
  */
+const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Any date string the app handles -> "01 Sep 2026" (or the input if it can't be read). */
+export function formatDateLong(dateStr: string): string {
+  if (!dateStr) return "";
+  const trimmed = dateStr.trim();
+  if (/^\d{2} [A-Z][a-z]{2} \d{4}$/.test(trimmed)) return trimmed;
+  const dmy = formatDateDDMMYYYY(trimmed).match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  if (!dmy) return trimmed;
+  const month = SHORT_MONTHS[Number(dmy[2]) - 1];
+  return month ? `${dmy[1]} ${month} ${dmy[3]}` : trimmed;
+}
+
 export function formatDateDDMMYYYY(dateStr: string): string {
   if (!dateStr) return "";
   const trimmed = dateStr.trim();
